@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum OwnerStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum RouterStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentMethod {
+  MTN_MOMO
+  ORANGE_MONEY
+}
+
+enum PackageType {
+  TIME_BASED
+  DATA_BASED
+}
+
+enum VoucherStatus {
+  UNUSED
+  REDEEMED
+  EXPIRED
+  REVOKED
+}
+
+enum RouterCommandType {
+  GRANT_ACCESS
+  KICK_USER
+}
+
+model Owner {
+  id                 String      @id @default(uuid())
+  name               String
+  email              String      @unique
+  passwordHash       String
+  walletBalance      Decimal     @default(0) @db.Decimal(12, 2)
+  status             OwnerStatus @default(PENDING)
+  emailVerified      Boolean     @default(false)
+  emailVerifyToken   String?
+  resetPasswordToken String?
+  resetPasswordExpiry DateTime?
+  portalBrandName     String?
+  portalLogoUrl       String?
+  portalAccentColor   String?
+  portalWelcomeText   String?
+  showPlatformCredit  Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  locations    Location[]
+  transactions Transaction[]
+  withdrawals  Withdrawal[]
+}
+
+model Location {
+  id                      String   @id @default(uuid())
+  ownerId                 String
+  name                    String
+  address                 String
+  isActive                Boolean  @default(true)
+  allowHotspotSharing     Boolean  @default(false)
+  maxHotspotDevices       Int      @default(0)
+  maxDevicesPerAccessCode Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  owner        Owner         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  routers      Router[]
+  packages     Package[]
+  transactions Transaction[]
+  vouchers     Voucher[]
+}
+
+model Router {
+  id          String       @id @default(uuid())
+  locationId  String
+  name        String
+  routerToken String       @unique
+  status      RouterStatus @default(OFFLINE)
+  lastSeenAt  DateTime?
+  mikrotikIp  String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  location     Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  commands     RouterCommand[]
+  vouchers     Voucher[]
+}
+
+model Package {
+  id                  String      @id @default(uuid())
+  locationId          String
+  name                String
+  type                PackageType @default(TIME_BASED)
+  durationMinutes     Int
+  priceXaf            Int
+  dataCapMb           Int?
+  uploadSpeedMbPerSec Int         @default(1)
+  isActive            Boolean     @default(true)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  location     Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  vouchers     Voucher[]
+}
+
+model Transaction {
+  id               String            @id @default(uuid())
+  ownerId          String
+  locationId       String
+  routerId         String
+  packageId        String
+  subscriberPhone  String
+  subscriberMac    String?
+  deviceId         String?
+  hotspotUsername  String?
+  hotspotPin       String?
+  amountXaf        Int
+  platformFeeXaf   Int
+  ownerCreditXaf   Int
+  campayReference  String?
+  voucherId        String?
+  status           TransactionStatus @default(PENDING)
+  sessionStart     DateTime?
+  sessionEnd       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  owner    Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  router   Router   @relation(fields: [routerId], references: [id], onDelete: Cascade)
+  package  Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  voucher  Voucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+
+  @@index([campayReference])
+  @@index([subscriberMac, routerId])
+  @@index([deviceId, routerId])
+  @@index([subscriberPhone, routerId])
+  @@index([voucherId])
+  @@index([ownerId, createdAt])
+}
+
+model Withdrawal {
+  id          String           @id @default(uuid())
+  ownerId     String
+  amountXaf   Int
+  phoneNumber String
+  method      PaymentMethod
+  status      WithdrawalStatus @default(PENDING)
+  adminNote   String?
+  createdAt   DateTime         @default(now())
+  processedAt DateTime?
+
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model RouterCommand {
+  id        String            @id @default(uuid())
+  routerId  String
+  type      RouterCommandType
+  payload   Json
+  executed  Boolean           @default(false)
+  createdAt DateTime          @default(now())
+
+  router Router @relation(fields: [routerId], references: [id], onDelete: Cascade)
+}
+
+model Voucher {
+  id          String        @id @default(uuid())
+  locationId  String
+  packageId   String
+  code        String        @unique
+  pin         String?
+  batchLabel  String?
+  status      VoucherStatus @default(UNUSED)
+  expiresAt   DateTime?
+  redeemedAt  DateTime?
+  redeemedMac String?
+  routerId    String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  location    Location     @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  package     Package      @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  router      Router?      @relation(fields: [routerId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+
+  @@index([locationId, status])
+  @@index([code])
+}

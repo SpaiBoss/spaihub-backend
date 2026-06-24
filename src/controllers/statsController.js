@@ -53,7 +53,7 @@ export async function getOwnerStats(req, res, next) {
       prisma.transaction.count({ where: successTodayWhere }),
       prisma.transaction.groupBy({
         by: ['subscriberPhone'],
-        where: { ...successTodayWhere, subscriberPhone: { not: null } },
+        where: { ...successTodayWhere, subscriberPhone: { not: '' } },
       }).then((rows) => rows.length),
       sumOwnerCredit(prisma, {
         ownerId,

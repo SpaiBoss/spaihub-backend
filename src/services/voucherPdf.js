@@ -74,7 +74,17 @@ export async function loadBrandingAssets(branding = {}) {
   return { accent, brandName, logoBuffer, welcomeText: branding.welcomeText?.trim() || null };
 }
 
-function drawBrandHeader(doc, box, branding, assets) {
+function drawTextBrand(doc, x, y, width, assets, size) {
+  const opts = { width, align: 'center' };
+  const name = assets.brandName;
+  if (name) {
+    doc.font('Helvetica-Bold').fontSize(size).fillColor(NAVY).text(name, x, y, opts);
+    return;
+  }
+  doc.font('Helvetica-Bold').fontSize(size).fillColor(BRAND).text('Spai-Hub', x, y, opts);
+}
+
+function drawBrandHeader(doc, box, assets) {
   const { x, y, w } = box;
   const pad = 12;
   const innerX = x + pad;
@@ -91,31 +101,19 @@ function drawBrandHeader(doc, box, branding, assets) {
       const logoH = large ? 22 : 18;
       doc.image(assets.logoBuffer, innerX, cursorY, {
         fit: [innerW, logoH],
-        align: 'left',
+        align: 'center',
       });
       cursorY += logoH + (large ? 8 : 6);
     } catch {
-      drawTextBrand(doc, innerX, cursorY, assets, large ? 13 : 11);
+      drawTextBrand(doc, innerX, cursorY, innerW, assets, large ? 13 : 11);
       cursorY += large ? 18 : 15;
     }
   } else {
-    drawTextBrand(doc, innerX, cursorY, assets, large ? 13 : 11);
+    drawTextBrand(doc, innerX, cursorY, innerW, assets, large ? 13 : 11);
     cursorY += large ? 18 : 15;
   }
 
   return cursorY;
-}
-
-function drawTextBrand(doc, x, y, assets, size) {
-  const name = assets.brandName;
-  if (name) {
-    doc.font('Helvetica-Bold').fontSize(size).fillColor(NAVY).text(name, x, y, { width: 200 });
-    return;
-  }
-  doc.font('Helvetica-Bold').fontSize(size);
-  doc.fillColor(NAVY).text('Spai', x, y, { continued: true });
-  doc.fillColor(MUTED).text('-', { continued: true });
-  doc.fillColor(BRAND).text('Hub');
 }
 
 function drawTicket(doc, voucher, box, assets) {
@@ -130,21 +128,25 @@ function drawTicket(doc, voucher, box, assets) {
   doc.roundedRect(x + 4, y + 4, w - 8, h - 8, 8).fillAndStroke();
   doc.restore();
 
-  let cursorY = drawBrandHeader(doc, { x, y, w, h }, {}, assets);
+  let cursorY = drawBrandHeader(doc, { x, y, w, h }, assets);
   cursorY += large ? 2 : 0;
 
   doc.font('Helvetica').fontSize(large ? 7.5 : 7).fillColor(MUTED);
-  doc.text(voucher.location.name.toUpperCase(), innerX, cursorY, { width: innerW, characterSpacing: 0.4 });
+  doc.text(voucher.location.name.toUpperCase(), innerX, cursorY, {
+    width: innerW,
+    align: 'center',
+    characterSpacing: 0.4,
+  });
   cursorY += large ? 12 : 10;
 
   doc.font('Helvetica-Bold').fontSize(large ? 10 : 9).fillColor(NAVY);
-  doc.text(voucher.package.name, innerX, cursorY, { width: innerW });
+  doc.text(voucher.package.name, innerX, cursorY, { width: innerW, align: 'center' });
   cursorY += large ? 13 : 11;
 
   const detail = formatPackageLine(voucher.package);
   if (detail) {
     doc.font('Helvetica').fontSize(7).fillColor(MUTED);
-    doc.text(detail, innerX, cursorY, { width: innerW });
+    doc.text(detail, innerX, cursorY, { width: innerW, align: 'center' });
     cursorY += large ? 11 : 9;
   }
 
@@ -210,12 +212,15 @@ export async function buildVouchersPdf(vouchers, perPage = 6, branding = {}) {
 
     if (vouchers.length === 0) {
       doc.addPage();
-      drawTextBrand(doc, MARGIN, MARGIN, assets, 18);
+      drawTextBrand(doc, MARGIN, MARGIN, PAGE_W - MARGIN * 2, assets, 18);
       doc
         .font('Helvetica')
         .fontSize(12)
         .fillColor(MUTED)
-        .text('No vouchers match your filters.', MARGIN, MARGIN + 28);
+        .text('No vouchers match your filters.', MARGIN, MARGIN + 28, {
+          width: PAGE_W - MARGIN * 2,
+          align: 'center',
+        });
       doc.end();
       return;
     }

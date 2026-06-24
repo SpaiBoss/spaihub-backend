@@ -21,6 +21,7 @@ export function resolvePortalBranding(owner) {
     accentColor: isValidAccentColor(owner?.portalAccentColor) ? owner.portalAccentColor.trim() : null,
     welcomeText: owner?.portalWelcomeText?.trim() || null,
     showPlatformCredit: true,
+    showUploadSpeed: owner?.portalShowUploadSpeed === true,
   };
 }
 
@@ -53,6 +54,10 @@ export function parseBrandingInput(body) {
     data.portalWelcomeText = value.slice(0, 160) || null;
   }
 
+  if (body.portalShowUploadSpeed !== undefined) {
+    data.portalShowUploadSpeed = body.portalShowUploadSpeed === true;
+  }
+
   if (body.showPlatformCredit !== undefined && body.showPlatformCredit === false) {
     return { error: 'Removing the platform credit requires a custom agreement. Contact us at spaitrace.com to negotiate.' };
   }
@@ -67,6 +72,7 @@ export function brandingSelectFields() {
     portalAccentColor: true,
     portalWelcomeText: true,
     showPlatformCredit: true,
+    portalShowUploadSpeed: true,
   };
 }
 

@@ -70,6 +70,7 @@ model Owner {
   portalAccentColor   String?
   portalWelcomeText   String?
   showPlatformCredit  Boolean     @default(true)
+  portalShowUploadSpeed Boolean   @default(false)
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 

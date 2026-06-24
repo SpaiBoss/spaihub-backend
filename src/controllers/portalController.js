@@ -53,11 +53,18 @@ export async function getPortal(req, res, next) {
       return res.status(404).json({ error: 'Router not found' });
     }
 
+    const branding = resolvePortalBranding(router.location.owner);
+    const packages = router.location.packages.map((pkg) => {
+      if (branding.showUploadSpeed) return pkg;
+      const { uploadSpeedMbPerSec, ...publicPkg } = pkg;
+      return publicPkg;
+    });
+
     res.json({
       locationName: router.location.name,
       routerStatus: router.status,
-      packages: router.location.packages,
-      branding: resolvePortalBranding(router.location.owner),
+      packages,
+      branding,
     });
   } catch (err) {
     next(err);

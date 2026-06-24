@@ -28,6 +28,7 @@ export async function getBranding(req, res, next) {
         portalAccentColor: true,
         portalWelcomeText: true,
         showPlatformCredit: true,
+        portalShowUploadSpeed: true,
       },
     });
 
@@ -56,6 +57,7 @@ export async function updateBranding(req, res, next) {
         portalAccentColor: true,
         portalWelcomeText: true,
         showPlatformCredit: true,
+        portalShowUploadSpeed: true,
       },
     });
 
@@ -104,6 +106,7 @@ export async function uploadBrandingLogo(req, res, next) {
         portalAccentColor: true,
         portalWelcomeText: true,
         showPlatformCredit: true,
+        portalShowUploadSpeed: true,
       },
     });
 
@@ -133,6 +136,7 @@ export async function removeBrandingLogo(req, res, next) {
         portalAccentColor: true,
         portalWelcomeText: true,
         showPlatformCredit: true,
+        portalShowUploadSpeed: true,
       },
     });
 

@@ -23,7 +23,6 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
         name: true,
         dataCapMb: true,
         durationMinutes: true,
-        uploadSpeedMbPerSec: true,
       },
     },
   };

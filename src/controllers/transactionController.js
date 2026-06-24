@@ -80,6 +80,7 @@ export async function exportTransactions(req, res, next) {
       'Amount (XAF)',
       'Platform Fee (XAF)',
       'Your Share (XAF)',
+      'Payment Source',
       'Status',
     ];
 
@@ -92,6 +93,7 @@ export async function exportTransactions(req, res, next) {
       tx.amountXaf,
       tx.platformFeeXaf,
       tx.ownerCreditXaf,
+      tx.voucherId ? 'Voucher' : 'Mobile Money',
       tx.status,
     ]);
 

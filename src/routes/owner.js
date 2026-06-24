@@ -42,6 +42,7 @@ import {
   uploadBrandingLogo,
   removeBrandingLogo,
 } from '../controllers/brandingController.js';
+import { exportOwnerAccountingReport } from '../controllers/reportsController.js';
 
 const router = Router();
 
@@ -68,6 +69,7 @@ router.get('/stats/routers', getRouterStatus);
 
 router.get('/transactions', getTransactions);
 router.get('/transactions/export', exportTransactions);
+router.get('/reports/accounting', exportOwnerAccountingReport);
 
 router.get('/wallet', getWallet);
 router.post('/wallet/withdraw', requestWithdrawal);

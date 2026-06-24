@@ -292,16 +292,57 @@ export async function exportAdminTransactions(req, res, next) {
 
 export async function getWithdrawals(req, res, next) {
   try {
-    const { status } = req.query;
-    const where = status ? { status } : {};
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = 20;
+    const skip = (page - 1) * limit;
+    const { status, history } = req.query;
 
-    const withdrawals = await prisma.withdrawal.findMany({
-      where,
-      include: { owner: { select: { name: true, email: true } } },
-      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+    let where = {};
+    if (status) {
+      where.status = status;
+    } else if (history === 'true') {
+      where.status = { in: ['APPROVED', 'REJECTED'] };
+    }
+
+    const include = { owner: { select: { name: true, email: true } } };
+
+    if (status === 'PENDING') {
+      const withdrawals = await prisma.withdrawal.findMany({
+        where,
+        include,
+        orderBy: { createdAt: 'desc' },
+      });
+      return res.json({
+        withdrawals,
+        pagination: {
+          page: 1,
+          limit: withdrawals.length,
+          total: withdrawals.length,
+          totalPages: 1,
+        },
+      });
+    }
+
+    const [withdrawals, total] = await Promise.all([
+      prisma.withdrawal.findMany({
+        where,
+        include,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.withdrawal.count({ where }),
+    ]);
+
+    res.json({
+      withdrawals,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
     });
-
-    res.json(withdrawals);
   } catch (err) {
     next(err);
   }

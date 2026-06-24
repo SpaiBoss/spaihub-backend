@@ -50,3 +50,25 @@ export function buildDailyChart(transactions, days, valueKey = 'ownerCreditXaf')
 
   return Object.entries(dailyMap).map(([date, amount]) => ({ date, amount }));
 }
+
+export function buildDailyChartForRange(transactions, dateFrom, dateTo, valueKey = 'ownerCreditXaf') {
+  const dailyMap = {};
+  const cursor = new Date(dateFrom);
+  cursor.setHours(0, 0, 0, 0);
+  const end = new Date(dateTo);
+  end.setHours(0, 0, 0, 0);
+
+  while (cursor <= end) {
+    dailyMap[cursor.toISOString().split('T')[0]] = 0;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  for (const tx of transactions) {
+    const key = tx.createdAt.toISOString().split('T')[0];
+    if (dailyMap[key] !== undefined) {
+      dailyMap[key] += tx[valueKey] ?? 0;
+    }
+  }
+
+  return Object.entries(dailyMap).map(([date, amount]) => ({ date, amount }));
+}

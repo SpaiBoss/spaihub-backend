@@ -1,28 +1,11 @@
 import prisma from '../utils/prisma.js';
-
-function startOfDay(date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfDay(date) {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
-
-async function getRevenueForPeriod(ownerId, from, to) {
-  const result = await prisma.transaction.aggregate({
-    where: {
-      ownerId,
-      status: 'SUCCESS',
-      createdAt: { gte: from, lte: to },
-    },
-    _sum: { ownerCreditXaf: true },
-  });
-  return result._sum.ownerCreditXaf || 0;
-}
+import {
+  startOfDay,
+  endOfDay,
+  startOfMonth,
+  sumOwnerCredit,
+  buildDailyChart,
+} from '../utils/statsHelpers.js';
 
 export async function getOwnerStats(req, res, next) {
   try {
@@ -32,40 +15,63 @@ export async function getOwnerStats(req, res, next) {
     const todayEnd = endOfDay(now);
     const yesterdayStart = startOfDay(new Date(now.getTime() - 86400000));
     const yesterdayEnd = endOfDay(new Date(now.getTime() - 86400000));
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthStart = startOfMonth(now);
+    const lastMonthStart = startOfMonth(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+    const lastMonthEnd = endOfDay(new Date(monthStart.getTime() - 1));
+
+    const successTodayWhere = {
+      ownerId,
+      status: 'SUCCESS',
+      createdAt: { gte: todayStart, lte: todayEnd },
+    };
 
     const [
       todayRevenue,
       yesterdayRevenue,
       monthRevenue,
+      lastMonthRevenue,
       allTimeRevenue,
       owner,
       activeSessions,
-      subscribersToday,
+      transactionsToday,
+      uniqueSubscribersToday,
+      momoRevenueMonth,
+      voucherRevenueMonth,
+      pendingTransactions,
+      failedTransactionsMonth,
       topPackages,
     ] = await Promise.all([
-      getRevenueForPeriod(ownerId, todayStart, todayEnd),
-      getRevenueForPeriod(ownerId, yesterdayStart, yesterdayEnd),
-      getRevenueForPeriod(ownerId, monthStart, now),
-      getRevenueForPeriod(ownerId, new Date(0), now),
+      sumOwnerCredit(prisma, { ownerId, createdAt: { gte: todayStart, lte: todayEnd } }),
+      sumOwnerCredit(prisma, { ownerId, createdAt: { gte: yesterdayStart, lte: yesterdayEnd } }),
+      sumOwnerCredit(prisma, { ownerId, createdAt: { gte: monthStart, lte: now } }),
+      sumOwnerCredit(prisma, { ownerId, createdAt: { gte: lastMonthStart, lte: lastMonthEnd } }),
+      sumOwnerCredit(prisma, { ownerId, createdAt: { lte: now } }),
       prisma.owner.findUnique({ where: { id: ownerId }, select: { walletBalance: true } }),
       prisma.transaction.count({
         where: { ownerId, status: 'SUCCESS', sessionEnd: { gt: now } },
       }),
+      prisma.transaction.count({ where: successTodayWhere }),
+      prisma.transaction.groupBy({
+        by: ['subscriberPhone'],
+        where: { ...successTodayWhere, subscriberPhone: { not: null } },
+      }).then((rows) => rows.length),
+      sumOwnerCredit(prisma, {
+        ownerId,
+        voucherId: null,
+        createdAt: { gte: monthStart, lte: now },
+      }),
+      sumOwnerCredit(prisma, {
+        ownerId,
+        voucherId: { not: null },
+        createdAt: { gte: monthStart, lte: now },
+      }),
+      prisma.transaction.count({ where: { ownerId, status: 'PENDING' } }),
       prisma.transaction.count({
-        where: {
-          ownerId,
-          status: 'SUCCESS',
-          createdAt: { gte: todayStart, lte: todayEnd },
-        },
+        where: { ownerId, status: 'FAILED', createdAt: { gte: monthStart, lte: now } },
       }),
       prisma.transaction.groupBy({
         by: ['packageId'],
-        where: {
-          ownerId,
-          status: 'SUCCESS',
-          createdAt: { gte: todayStart, lte: todayEnd },
-        },
+        where: successTodayWhere,
         _count: { id: true },
         orderBy: { _count: { id: 'desc' } },
         take: 3,
@@ -79,14 +85,29 @@ export async function getOwnerStats(req, res, next) {
     });
     const packageMap = Object.fromEntries(packages.map((p) => [p.id, p.name]));
 
+    const monthChangePercent =
+      lastMonthRevenue > 0
+        ? Math.round(((monthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
+        : monthRevenue > 0
+          ? 100
+          : 0;
+
     res.json({
       todayRevenue,
       yesterdayRevenue,
       monthRevenue,
+      lastMonthRevenue,
+      monthChangePercent,
       allTimeRevenue,
       walletBalance: Number(owner.walletBalance),
       activeSessions,
-      subscribersToday,
+      transactionsToday,
+      subscribersToday: transactionsToday,
+      uniqueSubscribersToday,
+      momoRevenueMonth,
+      voucherRevenueMonth,
+      pendingTransactions,
+      failedTransactionsMonth,
       topPackages: topPackages.map((p) => ({
         packageId: p.packageId,
         name: packageMap[p.packageId] || 'Unknown',
@@ -101,36 +122,87 @@ export async function getOwnerStats(req, res, next) {
 export async function getRevenueChart(req, res, next) {
   try {
     const ownerId = req.owner.id;
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    thirtyDaysAgo.setHours(0, 0, 0, 0);
+    const days = Math.min(90, Math.max(7, parseInt(req.query.days) || 30));
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    from.setHours(0, 0, 0, 0);
 
     const transactions = await prisma.transaction.findMany({
       where: {
         ownerId,
         status: 'SUCCESS',
-        createdAt: { gte: thirtyDaysAgo },
+        createdAt: { gte: from },
       },
       select: { createdAt: true, ownerCreditXaf: true },
     });
 
-    const dailyMap = {};
-    for (let i = 0; i < 30; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - (29 - i));
-      const key = d.toISOString().split('T')[0];
-      dailyMap[key] = 0;
-    }
+    res.json(buildDailyChart(transactions, days, 'ownerCreditXaf'));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getOwnerAnalytics(req, res, next) {
+  try {
+    const ownerId = req.owner.id;
+    const days = 30;
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    from.setHours(0, 0, 0, 0);
+
+    const [locations, transactions, voucherStats] = await Promise.all([
+      prisma.location.findMany({
+        where: { ownerId, isActive: true },
+        select: { id: true, name: true },
+      }),
+      prisma.transaction.findMany({
+        where: { ownerId, status: 'SUCCESS', createdAt: { gte: from } },
+        select: { locationId: true, ownerCreditXaf: true, voucherId: true },
+      }),
+      Promise.all([
+        prisma.voucher.count({ where: { location: { ownerId }, status: 'UNUSED' } }),
+        prisma.voucher.count({ where: { location: { ownerId }, status: 'REDEEMED' } }),
+        prisma.voucher.count({ where: { location: { ownerId }, status: 'EXPIRED' } }),
+      ]),
+    ]);
+
+    const locationMap = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+    const revenueByLocationMap = {};
+    let momoTotal = 0;
+    let voucherTotal = 0;
 
     for (const tx of transactions) {
-      const key = tx.createdAt.toISOString().split('T')[0];
-      if (dailyMap[key] !== undefined) {
-        dailyMap[key] += tx.ownerCreditXaf;
-      }
+      revenueByLocationMap[tx.locationId] = (revenueByLocationMap[tx.locationId] || 0) + tx.ownerCreditXaf;
+      if (tx.voucherId) voucherTotal += tx.ownerCreditXaf;
+      else momoTotal += tx.ownerCreditXaf;
     }
 
-    const chart = Object.entries(dailyMap).map(([date, amount]) => ({ date, amount }));
-    res.json(chart);
+    const revenueByLocation = Object.entries(revenueByLocationMap)
+      .map(([locationId, revenue]) => ({
+        locationId,
+        name: locationMap[locationId] || 'Unknown',
+        revenue,
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const [unusedVouchers, redeemedVouchers, expiredVouchers] = voucherStats;
+    const totalVouchers = unusedVouchers + redeemedVouchers + expiredVouchers;
+    const redemptionRate =
+      redeemedVouchers + expiredVouchers > 0
+        ? Math.round((redeemedVouchers / (redeemedVouchers + expiredVouchers)) * 100)
+        : 0;
+
+    res.json({
+      revenueByLocation,
+      paymentMix: { momo: momoTotal, voucher: voucherTotal },
+      vouchers: {
+        unused: unusedVouchers,
+        redeemed: redeemedVouchers,
+        expired: expiredVouchers,
+        total: totalVouchers,
+        redemptionRate,
+      },
+    });
   } catch (err) {
     next(err);
   }

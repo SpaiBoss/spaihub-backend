@@ -69,3 +69,8 @@ export function brandingSelectFields() {
     showPlatformCredit: true,
   };
 }
+
+export function resolveLocalLogoPath(logoUrl) {
+  if (!logoUrl?.startsWith('/uploads/')) return null;
+  return logoUrl;
+}

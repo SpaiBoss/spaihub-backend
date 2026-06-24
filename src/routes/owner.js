@@ -21,6 +21,7 @@ import {
   getOwnerStats,
   getRevenueChart,
   getRouterStatus,
+  getOwnerAnalytics,
 } from '../controllers/statsController.js';
 import {
   getTransactions,
@@ -62,6 +63,7 @@ router.delete('/locations/:locationId/packages/:packageId', deactivatePackage);
 
 router.get('/stats', getOwnerStats);
 router.get('/stats/revenue-chart', getRevenueChart);
+router.get('/stats/analytics', getOwnerAnalytics);
 router.get('/stats/routers', getRouterStatus);
 
 router.get('/transactions', getTransactions);

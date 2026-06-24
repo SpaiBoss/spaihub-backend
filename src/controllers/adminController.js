@@ -1,17 +1,38 @@
 import prisma from '../utils/prisma.js';
 import { sendWithdrawalStatusEmail } from '../services/email.js';
+import {
+  startOfDay,
+  endOfDay,
+  startOfMonth,
+  sumPlatformAmounts,
+  buildDailyChart,
+} from '../utils/statsHelpers.js';
 
 export async function getPlatformStats(req, res, next) {
   try {
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const todayEnd = endOfDay(now);
+    const monthStart = startOfMonth(now);
+    const lastMonthStart = startOfMonth(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+    const lastMonthEnd = endOfDay(new Date(monthStart.getTime() - 1));
+
     const [
       totalOwners,
+      activeOwners,
       totalTransactions,
       revenueAgg,
       feesAgg,
       withdrawnAgg,
       pendingWithdrawals,
+      todayTotals,
+      monthTotals,
+      lastMonthTotals,
+      pendingTransactions,
+      failedTransactionsMonth,
     ] = await Promise.all([
       prisma.owner.count(),
+      prisma.owner.count({ where: { status: 'ACTIVE' } }),
       prisma.transaction.count({ where: { status: 'SUCCESS' } }),
       prisma.transaction.aggregate({
         where: { status: 'SUCCESS' },
@@ -29,17 +50,75 @@ export async function getPlatformStats(req, res, next) {
         where: { status: 'PENDING' },
         select: { amountXaf: true },
       }),
+      sumPlatformAmounts(prisma, { createdAt: { gte: todayStart, lte: todayEnd } }),
+      sumPlatformAmounts(prisma, { createdAt: { gte: monthStart, lte: now } }),
+      sumPlatformAmounts(prisma, { createdAt: { gte: lastMonthStart, lte: lastMonthEnd } }),
+      prisma.transaction.count({ where: { status: 'PENDING' } }),
+      prisma.transaction.count({
+        where: { status: 'FAILED', createdAt: { gte: monthStart, lte: now } },
+      }),
     ]);
+
+    const monthFeeChangePercent =
+      lastMonthTotals.fees > 0
+        ? Math.round(((monthTotals.fees - lastMonthTotals.fees) / lastMonthTotals.fees) * 100)
+        : monthTotals.fees > 0
+          ? 100
+          : 0;
 
     res.json({
       totalOwners,
+      activeOwners,
       totalTransactions,
       totalRevenueProcessed: revenueAgg._sum.amountXaf || 0,
       totalPlatformFees: feesAgg._sum.platformFeeXaf || 0,
       totalWithdrawn: withdrawnAgg._sum.amountXaf || 0,
       pendingWithdrawalsCount: pendingWithdrawals.length,
       pendingWithdrawalsTotal: pendingWithdrawals.reduce((sum, w) => sum + w.amountXaf, 0),
+      todayGrossRevenue: todayTotals.gross,
+      todayPlatformFees: todayTotals.fees,
+      monthGrossRevenue: monthTotals.gross,
+      monthPlatformFees: monthTotals.fees,
+      lastMonthPlatformFees: lastMonthTotals.fees,
+      monthFeeChangePercent,
+      pendingTransactions,
+      failedTransactionsMonth,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getPlatformRevenueChart(req, res, next) {
+  try {
+    const days = Math.min(90, Math.max(7, parseInt(req.query.days) || 30));
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    from.setHours(0, 0, 0, 0);
+
+    const transactions = await prisma.transaction.findMany({
+      where: { status: 'SUCCESS', createdAt: { gte: from } },
+      select: { createdAt: true, amountXaf: true, platformFeeXaf: true },
+    });
+
+    const grossChart = buildDailyChart(
+      transactions.map((tx) => ({ ...tx, ownerCreditXaf: tx.amountXaf })),
+      days,
+      'ownerCreditXaf'
+    );
+    const feesChart = buildDailyChart(
+      transactions.map((tx) => ({ ...tx, ownerCreditXaf: tx.platformFeeXaf })),
+      days,
+      'ownerCreditXaf'
+    );
+
+    const chart = grossChart.map((row, i) => ({
+      date: row.date,
+      gross: row.amount,
+      fees: feesChart[i]?.amount || 0,
+    }));
+
+    res.json(chart);
   } catch (err) {
     next(err);
   }
@@ -120,17 +199,7 @@ export async function getAllTransactions(req, res, next) {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = 20;
     const skip = (page - 1) * limit;
-    const { ownerId, locationId, status, dateFrom, dateTo } = req.query;
-
-    const where = {};
-    if (ownerId) where.ownerId = ownerId;
-    if (locationId) where.locationId = locationId;
-    if (status) where.status = status;
-    if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-      if (dateTo) where.createdAt.lte = new Date(dateTo);
-    }
+    const where = buildAdminTransactionWhere(req.query);
 
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
@@ -151,6 +220,71 @@ export async function getAllTransactions(req, res, next) {
       transactions,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+function buildAdminTransactionWhere(query) {
+  const { ownerId, locationId, status, dateFrom, dateTo } = query;
+  const where = {};
+  if (ownerId) where.ownerId = ownerId;
+  if (locationId) where.locationId = locationId;
+  if (status) where.status = status;
+  if (dateFrom || dateTo) {
+    where.createdAt = {};
+    if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+    if (dateTo) where.createdAt.lte = new Date(dateTo);
+  }
+  return where;
+}
+
+export async function exportAdminTransactions(req, res, next) {
+  try {
+    const where = buildAdminTransactionWhere(req.query);
+
+    const transactions = await prisma.transaction.findMany({
+      where,
+      include: {
+        owner: { select: { name: true, email: true } },
+        location: { select: { name: true } },
+        package: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const headers = [
+      'Date',
+      'Owner',
+      'Owner Email',
+      'Location',
+      'Package',
+      'Amount (XAF)',
+      'Platform Fee',
+      'Owner Share',
+      'Status',
+      'Payment Source',
+    ];
+    const rows = transactions.map((tx) => [
+      tx.createdAt.toISOString(),
+      tx.owner.name,
+      tx.owner.email,
+      tx.location.name,
+      tx.package.name,
+      tx.amountXaf,
+      tx.platformFeeXaf,
+      tx.ownerCreditXaf,
+      tx.status,
+      tx.voucherId ? 'Voucher' : 'Mobile Money',
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=platform-transactions.csv');
+    res.send(csv);
   } catch (err) {
     next(err);
   }

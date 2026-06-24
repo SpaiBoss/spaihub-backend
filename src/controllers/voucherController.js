@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import prisma from '../utils/prisma.js';
 import { buildVouchersPdf, PDF_LAYOUTS } from '../services/voucherPdf.js';
 import { generateHotspotPin } from '../utils/hotspotCredentials.js';
+import { brandingSelectFields, resolvePortalBranding } from '../utils/portalBranding.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -230,8 +231,17 @@ export async function exportVouchersPdf(req, res, next) {
       take: 500,
     });
 
-    const pdf = await buildVouchersPdf(vouchers, perPageNum);
-    const filename = `spaihub-vouchers-${perPageNum}up.pdf`;
+    const owner = await prisma.owner.findUnique({
+      where: { id: req.owner.id },
+      select: brandingSelectFields(),
+    });
+    const branding = resolvePortalBranding(owner);
+
+    const pdf = await buildVouchersPdf(vouchers, perPageNum, branding);
+    const brandSlug = branding.brandName
+      ? branding.brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)
+      : 'vouchers';
+    const filename = `${brandSlug}-${perPageNum}up.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

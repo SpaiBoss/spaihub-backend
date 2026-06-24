@@ -1,4 +1,11 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import axios from 'axios';
 import PDFDocument from 'pdfkit';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
@@ -7,6 +14,7 @@ const MARGIN = 36;
 const NAVY = '#1A3C5E';
 const BRAND = '#5463FF';
 const MUTED = '#64748b';
+const LIGHT = '#f1f5f9';
 
 export const PDF_LAYOUTS = {
   2: { cols: 1, rows: 2, label: '2 per page (large)' },
@@ -22,99 +30,175 @@ function formatDuration(minutes) {
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor((minutes % 1440) / 60);
   const parts = [];
-  if (days) parts.push(`${days}d`);
-  if (hours) parts.push(`${hours}h`);
-  if (!days && !hours) parts.push(`${minutes}m`);
+  if (days) parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+  if (hours) parts.push(`${hours} hr${hours !== 1 ? 's' : ''}`);
+  if (!days && !hours) parts.push(`${minutes} min`);
   return parts.join(' ');
 }
 
 function formatPackageLine(pkg) {
   if (!pkg) return '';
   if (pkg.type === 'DATA_BASED') {
-    const cap = pkg.dataCapMb >= 1024 ? `${(pkg.dataCapMb / 1024).toFixed(0)}GB` : `${pkg.dataCapMb}MB`;
+    const cap = pkg.dataCapMb >= 1024 ? `${(pkg.dataCapMb / 1024).toFixed(0)} GB` : `${pkg.dataCapMb} MB`;
     return `${cap} data · ${formatDuration(pkg.durationMinutes)} validity`;
   }
   const browse = formatDuration(pkg.durationMinutes);
   const cap = pkg.dataCapMb
     ? pkg.dataCapMb >= 1024
-      ? `${(pkg.dataCapMb / 1024).toFixed(0)}GB cap`
-      : `${pkg.dataCapMb}MB cap`
+      ? `${(pkg.dataCapMb / 1024).toFixed(0)} GB cap`
+      : `${pkg.dataCapMb} MB cap`
     : 'Unlimited data';
   return `${browse} · ${cap}`;
 }
 
-function drawWordmark(doc, x, y, size = 14) {
+export async function loadBrandingAssets(branding = {}) {
+  const accent = branding.accentColor || BRAND;
+  const brandName = branding.brandName?.trim() || null;
+  let logoBuffer = null;
+
+  const logoUrl = branding.logoUrl;
+  if (logoUrl?.startsWith('/uploads/')) {
+    const localPath = path.join(UPLOADS_ROOT, logoUrl.replace(/^\/uploads\//, ''));
+    if (fs.existsSync(localPath)) {
+      logoBuffer = fs.readFileSync(localPath);
+    }
+  } else if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
+    try {
+      const response = await axios.get(logoUrl, { responseType: 'arraybuffer', timeout: 10000 });
+      logoBuffer = Buffer.from(response.data);
+    } catch {
+      logoBuffer = null;
+    }
+  }
+
+  return { accent, brandName, logoBuffer, welcomeText: branding.welcomeText?.trim() || null };
+}
+
+function drawBrandHeader(doc, box, branding, assets) {
+  const { x, y, w } = box;
+  const pad = 12;
+  const innerX = x + pad;
+  let cursorY = y + pad;
+  const innerW = w - pad * 2;
+  const large = box.h > 130;
+
+  doc.save();
+  doc.rect(x + 6, y + 6, w - 12, 4).fill(assets.accent);
+  doc.restore();
+
+  if (assets.logoBuffer) {
+    try {
+      const logoH = large ? 22 : 18;
+      doc.image(assets.logoBuffer, innerX, cursorY, {
+        fit: [innerW, logoH],
+        align: 'left',
+      });
+      cursorY += logoH + (large ? 8 : 6);
+    } catch {
+      drawTextBrand(doc, innerX, cursorY, assets, large ? 13 : 11);
+      cursorY += large ? 18 : 15;
+    }
+  } else {
+    drawTextBrand(doc, innerX, cursorY, assets, large ? 13 : 11);
+    cursorY += large ? 18 : 15;
+  }
+
+  return cursorY;
+}
+
+function drawTextBrand(doc, x, y, assets, size) {
+  const name = assets.brandName;
+  if (name) {
+    doc.font('Helvetica-Bold').fontSize(size).fillColor(NAVY).text(name, x, y, { width: 200 });
+    return;
+  }
   doc.font('Helvetica-Bold').fontSize(size);
   doc.fillColor(NAVY).text('Spai', x, y, { continued: true });
   doc.fillColor(MUTED).text('-', { continued: true });
   doc.fillColor(BRAND).text('Hub');
 }
 
-function drawTicket(doc, voucher, box) {
+function drawTicket(doc, voucher, box, assets) {
   const { x, y, w, h } = box;
   const pad = 10;
+  const innerX = x + pad + 2;
+  const innerW = w - pad * 2 - 4;
+  const large = h > 130;
 
   doc.save();
-  doc.dash(4, { space: 3 }).lineWidth(0.75).strokeColor('#cbd5e1');
-  doc.roundedRect(x + 4, y + 4, w - 8, h - 8, 6).stroke();
-  doc.undash();
+  doc.lineWidth(0.75).strokeColor('#dbeafe').fillColor('#ffffff');
+  doc.roundedRect(x + 4, y + 4, w - 8, h - 8, 8).fillAndStroke();
   doc.restore();
 
-  const innerX = x + pad + 4;
-  let cursorY = y + pad + 6;
-  const innerW = w - pad * 2 - 8;
+  let cursorY = drawBrandHeader(doc, { x, y, w, h }, {}, assets);
+  cursorY += large ? 2 : 0;
 
-  drawWordmark(doc, innerX, cursorY, h > 130 ? 13 : 11);
-  cursorY += h > 130 ? 20 : 16;
+  doc.font('Helvetica').fontSize(large ? 7.5 : 7).fillColor(MUTED);
+  doc.text(voucher.location.name.toUpperCase(), innerX, cursorY, { width: innerW, characterSpacing: 0.4 });
+  cursorY += large ? 12 : 10;
 
-  doc.font('Helvetica').fontSize(h > 130 ? 8 : 7).fillColor(MUTED);
-  doc.text(voucher.location.name, innerX, cursorY, { width: innerW });
-  cursorY += h > 130 ? 12 : 10;
-
-  doc.font('Helvetica-Bold').fontSize(h > 130 ? 9 : 8).fillColor(NAVY);
+  doc.font('Helvetica-Bold').fontSize(large ? 10 : 9).fillColor(NAVY);
   doc.text(voucher.package.name, innerX, cursorY, { width: innerW });
-  cursorY += h > 130 ? 12 : 10;
+  cursorY += large ? 13 : 11;
 
-  doc.font('Helvetica').fontSize(7).fillColor(MUTED);
   const detail = formatPackageLine(voucher.package);
   if (detail) {
+    doc.font('Helvetica').fontSize(7).fillColor(MUTED);
     doc.text(detail, innerX, cursorY, { width: innerW });
-    cursorY += h > 130 ? 11 : 9;
+    cursorY += large ? 11 : 9;
   }
 
-  const codeSize = h > 150 ? 16 : h > 120 ? 14 : h > 90 ? 12 : 10;
+  const codeBoxY = cursorY + 2;
+  const codeBoxH = large ? 28 : 24;
+  doc.save();
+  doc.roundedRect(innerX, codeBoxY, innerW, codeBoxH, 5).fill(LIGHT);
+  doc.restore();
+
+  const codeSize = large ? 15 : h > 95 ? 12 : 10;
   doc.font('Courier-Bold').fontSize(codeSize).fillColor(NAVY);
-  doc.text(voucher.code, innerX, cursorY, { width: innerW, align: 'center' });
-  cursorY += codeSize + (h > 130 ? 6 : 4);
+  doc.text(voucher.code, innerX, codeBoxY + (codeBoxH - codeSize) / 2 - 1, {
+    width: innerW,
+    align: 'center',
+  });
+  cursorY = codeBoxY + codeBoxH + (large ? 8 : 6);
 
   if (voucher.pin) {
-    doc.font('Helvetica').fontSize(h > 130 ? 8 : 7).fillColor(MUTED);
-    doc.text('PIN', innerX, cursorY, { width: innerW, align: 'center' });
-    cursorY += h > 130 ? 10 : 8;
-    doc.font('Courier-Bold').fontSize(h > 130 ? 14 : 12).fillColor(BRAND);
+    doc.font('Helvetica-Bold').fontSize(6.5).fillColor(MUTED);
+    doc.text('WIFI PIN', innerX, cursorY, { width: innerW, align: 'center', characterSpacing: 0.8 });
+    cursorY += large ? 10 : 8;
+    doc.font('Courier-Bold').fontSize(large ? 16 : 14).fillColor(assets.accent);
     doc.text(voucher.pin, innerX, cursorY, { width: innerW, align: 'center' });
-    cursorY += h > 130 ? 14 : 10;
+    cursorY += large ? 16 : 13;
   }
 
-  doc.font('Helvetica').fontSize(6.5).fillColor(MUTED);
   const footnotes = [];
-  if (voucher.batchLabel) footnotes.push(`Batch: ${voucher.batchLabel}`);
+  if (voucher.batchLabel) footnotes.push(`Batch ${voucher.batchLabel}`);
   if (voucher.expiresAt) {
-    footnotes.push(`Redeem by ${new Date(voucher.expiresAt).toLocaleDateString()}`);
+    footnotes.push(`Valid until ${new Date(voucher.expiresAt).toLocaleDateString()}`);
   }
-  footnotes.push('Use code + PIN at WiFi login');
-  doc.text(footnotes.join(' · '), innerX, Math.min(cursorY, y + h - pad - 14), {
+  const instruction = assets.welcomeText || 'Enter code + PIN on the WiFi login page';
+  footnotes.push(instruction);
+
+  doc.font('Helvetica').fontSize(6).fillColor(MUTED);
+  doc.text(footnotes.join(' · '), innerX, Math.min(cursorY, y + h - pad - 18), {
+    width: innerW,
+    align: 'center',
+  });
+
+  doc.font('Helvetica').fontSize(5.5).fillColor('#94a3b8');
+  doc.text('Powered by spaitrace.com', innerX, y + h - pad - 10, {
     width: innerW,
     align: 'center',
   });
 }
 
-export function buildVouchersPdf(vouchers, perPage = 6) {
+export async function buildVouchersPdf(vouchers, perPage = 6, branding = {}) {
   const layout = PDF_LAYOUTS[perPage] || PDF_LAYOUTS[6];
   const usableW = PAGE_W - MARGIN * 2;
   const usableH = PAGE_H - MARGIN * 2;
   const cellW = usableW / layout.cols;
   const cellH = usableH / layout.rows;
+  const assets = await loadBrandingAssets(branding);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: false });
@@ -126,8 +210,12 @@ export function buildVouchersPdf(vouchers, perPage = 6) {
 
     if (vouchers.length === 0) {
       doc.addPage();
-      drawWordmark(doc, MARGIN, MARGIN, 18);
-      doc.font('Helvetica').fontSize(12).fillColor(MUTED).text('No vouchers match your filters.', MARGIN, MARGIN + 28);
+      drawTextBrand(doc, MARGIN, MARGIN, assets, 18);
+      doc
+        .font('Helvetica')
+        .fontSize(12)
+        .fillColor(MUTED)
+        .text('No vouchers match your filters.', MARGIN, MARGIN + 28);
       doc.end();
       return;
     }
@@ -144,7 +232,7 @@ export function buildVouchersPdf(vouchers, perPage = 6) {
           y: MARGIN + row * cellH,
           w: cellW,
           h: cellH,
-        });
+        }, assets);
       });
     }
 

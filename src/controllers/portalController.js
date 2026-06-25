@@ -4,6 +4,7 @@ import * as mikrotik from '../services/mikrotik.js';
 import { completePaidSession } from '../services/session.js';
 import { findActiveSession, sessionResponse } from '../services/portalSession.js';
 import { isValidDeviceId, normalizeMac } from '../utils/deviceId.js';
+import { normalizeCameroonMobileLocal, toCampayPhone } from '../utils/phone.js';
 import {
   getActiveVoucherSessions,
   validateAccessPolicy,
@@ -112,12 +113,25 @@ export async function checkSession(req, res, next) {
 }
 
 export async function initiatePayment(req, res, next) {
+  let transactionId = null;
+
   try {
     const { routerToken } = req.params;
     const { packageId, phoneNumber, macAddress, deviceId } = req.body;
 
     if (!packageId || !phoneNumber || !isValidDeviceId(deviceId)) {
       return res.status(400).json({ error: 'packageId, phoneNumber, and deviceId are required' });
+    }
+
+    const localPhone = normalizeCameroonMobileLocal(phoneNumber);
+    if (!localPhone) {
+      return res.status(400).json({ error: 'Enter a valid Cameroon mobile number (e.g. 677123456)' });
+    }
+
+    const campayPhone = toCampayPhone(localPhone);
+    const frontendUrl = process.env.FRONTEND_URL?.replace(/\/$/, '');
+    if (!frontendUrl) {
+      return res.status(503).json({ error: 'Payment service is temporarily unavailable' });
     }
 
     const normalizedMac = normalizeMac(macAddress);
@@ -148,7 +162,7 @@ export async function initiatePayment(req, res, next) {
         locationId: router.locationId,
         routerId: router.id,
         packageId: pkg.id,
-        subscriberPhone: phoneNumber,
+        subscriberPhone: localPhone,
         subscriberMac: normalizedMac,
         deviceId: deviceId.trim(),
         amountXaf: pkg.priceXaf,
@@ -157,8 +171,9 @@ export async function initiatePayment(req, res, next) {
         status: 'PENDING',
       },
     });
+    transactionId = transaction.id;
 
-    const redirectBase = `${process.env.FRONTEND_URL}/portal/${routerToken}`;
+    const redirectBase = `${frontendUrl}/portal/${routerToken}`;
     const redirectParams = new URLSearchParams();
     if (normalizedMac) redirectParams.set('mac', normalizedMac);
     const redirectUrl = redirectParams.toString()
@@ -167,7 +182,7 @@ export async function initiatePayment(req, res, next) {
 
     const payment = await campay.initiatePayment({
       amount: pkg.priceXaf,
-      from: phoneNumber,
+      from: campayPhone,
       description: `${pkg.name} - ${router.location.name}`,
       externalReference: transaction.id,
       redirectUrl,
@@ -181,8 +196,19 @@ export async function initiatePayment(req, res, next) {
     res.json({
       reference: payment.reference,
       message: 'Approve the payment on your phone',
+      operator: payment.operator,
     });
   } catch (err) {
+    if (transactionId) {
+      await prisma.transaction.update({
+        where: { id: transactionId },
+        data: { status: 'FAILED' },
+      }).catch(() => {});
+    }
+
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     next(err);
   }
 }
@@ -454,6 +480,9 @@ export async function checkPaymentStatus(req, res, next) {
 
     res.json({ status: 'PENDING' });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     next(err);
   }
 }

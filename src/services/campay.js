@@ -20,16 +20,34 @@ function campayErrorMessage(err) {
   if (data && typeof data === 'object') {
     const parts = [data.detail, data.message, data.error, data.non_field_errors?.[0]]
       .filter((v) => typeof v === 'string' && v.trim());
-    if (parts.length) return parts[0];
+    if (parts.length) {
+      const message = parts[0];
+      if (/unable to log in with provided credentials/i.test(message)) {
+        return 'Campay API credentials are invalid. Use your application username and password from campay.net (not your login email), and match CAMPAY_BASE_URL to demo or live.';
+      }
+      return message;
+    }
     const fieldErrors = Object.entries(data)
       .filter(([, v]) => Array.isArray(v) && v[0])
       .map(([k, v]) => `${k}: ${v[0]}`);
     if (fieldErrors.length) return fieldErrors[0];
   }
   if (err.response?.status === 401) {
-    return 'Payment service authentication failed. Check Campay credentials.';
+    return 'Campay API authentication failed. Check CAMPAY_USERNAME, CAMPAY_PASSWORD, and CAMPAY_BASE_URL on the server.';
   }
   return 'Could not start Mobile Money payment. Check your phone number and try again.';
+}
+
+function formBody(fields) {
+  return new URLSearchParams(
+    Object.entries(fields).filter(([, value]) => value !== undefined && value !== null)
+  );
+}
+
+async function campayPost(path, fields, token) {
+  const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+  if (token) headers.Authorization = `Token ${token}`;
+  return axios.post(`${CAMPAY_BASE}${path}`, formBody(fields), { headers });
 }
 
 function wrapCampayError(err) {
@@ -45,9 +63,9 @@ export async function getAccessToken() {
   }
 
   try {
-    const response = await axios.post(`${CAMPAY_BASE}/api/token/`, {
-      username: process.env.CAMPAY_USERNAME,
-      password: process.env.CAMPAY_PASSWORD,
+    const response = await campayPost('/api/token/', {
+      username: process.env.CAMPAY_USERNAME.trim(),
+      password: process.env.CAMPAY_PASSWORD.trim(),
     });
 
     if (!response.data?.token) {
@@ -66,8 +84,8 @@ export async function initiatePayment({ amount, currency = 'XAF', from, descript
   const token = await getAccessToken();
 
   try {
-    const response = await axios.post(
-      `${CAMPAY_BASE}/api/collect/`,
+    const response = await campayPost(
+      '/api/collect/',
       {
         amount: String(amount),
         currency,
@@ -76,7 +94,7 @@ export async function initiatePayment({ amount, currency = 'XAF', from, descript
         external_reference: externalReference,
         redirect_url: redirectUrl,
       },
-      { headers: { Authorization: `Token ${token}` } }
+      token
     );
 
     if (!response.data?.reference) {

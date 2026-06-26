@@ -9,6 +9,7 @@ import {
   exportAdminTransactions,
   getWithdrawals,
   processWithdrawal,
+  verifyWithdrawalCampay,
 } from '../controllers/adminController.js';
 import { exportAdminAccountingReport } from '../controllers/reportsController.js';
 
@@ -24,6 +25,7 @@ router.get('/transactions', getAllTransactions);
 router.get('/transactions/export', exportAdminTransactions);
 router.get('/reports/accounting', exportAdminAccountingReport);
 router.get('/withdrawals', getWithdrawals);
+router.get('/withdrawals/:id/campay-check', verifyWithdrawalCampay);
 router.post('/withdrawals/:id/process', processWithdrawal);
 
 export default router;

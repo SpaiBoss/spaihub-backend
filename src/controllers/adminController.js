@@ -1,8 +1,10 @@
 import prisma from '../utils/prisma.js';
 import { sendWithdrawalStatusEmail } from '../services/email.js';
+import * as campay from '../services/campay.js';
 import {
   completeWithdrawalDisbursement,
 } from '../services/withdrawalDisbursement.js';
+import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
 import {
   startOfDay,
   endOfDay,
@@ -431,6 +433,56 @@ export async function processWithdrawal(req, res, next) {
       }
       return res.status(502).json({ error: err.message || 'Mobile Money transfer failed' });
     }
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function verifyWithdrawalCampay(req, res, next) {
+  try {
+    const withdrawal = await prisma.withdrawal.findUnique({ where: { id: req.params.id } });
+    if (!withdrawal) {
+      return res.status(404).json({ error: 'Withdrawal not found' });
+    }
+
+    const campayPhone = toCampayPhone(withdrawal.phoneNumber);
+    const operator = detectCameroonOperator(withdrawal.phoneNumber);
+
+    let holder = null;
+    let holderError = null;
+    try {
+      holder = await campay.getHolderInfo(campayPhone);
+    } catch (err) {
+      const data = err.response?.data;
+      holderError =
+        (typeof data === 'object' && (data.detail || data.message)) ||
+        (typeof data === 'string' ? data : err.message);
+    }
+
+    let balance = null;
+    let balanceError = null;
+    try {
+      balance = await campay.getBalance();
+    } catch (err) {
+      balanceError = err.message;
+    }
+
+    res.json({
+      campayPhone,
+      operator,
+      holderName: holder?.full_name || null,
+      holderError,
+      balance: balance
+        ? {
+            total: Number(balance.total_balance ?? 0),
+            mtn: Number(balance.mtn_balance ?? 0),
+            orange: Number(balance.orange_balance ?? 0),
+            currency: balance.currency || 'XAF',
+          }
+        : null,
+      balanceError,
+      campayBaseUrl: process.env.CAMPAY_BASE_URL || '(default)',
+    });
   } catch (err) {
     next(err);
   }

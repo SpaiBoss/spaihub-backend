@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { detectCameroonOperator } from '../utils/phone.js';
 
 function defaultCampayBase() {
   return process.env.NODE_ENV === 'production' ? 'https://campay.net' : 'https://demo.campay.net';
@@ -29,21 +30,30 @@ function ensureCampayConfig() {
   }
 }
 
-function campayErrorMessage(err) {
+function campayErrorMessage(err, context = {}) {
   const data = err.response?.data;
-  if (typeof data === 'string' && data.trim()) return data.trim();
-  if (data && typeof data === 'object') {
-    const parts = [data.detail, data.message, data.error, data.non_field_errors?.[0]]
-      .filter((v) => typeof v === 'string' && v.trim());
-    if (parts.length) {
-      const message = parts[0];
+  let raw = '';
+  if (typeof data === 'string' && data.trim()) raw = data.trim();
+  else if (data && typeof data === 'object') {
+    raw = [data.detail, data.message, data.error, data.non_field_errors?.[0]]
+      .filter((v) => typeof v === 'string' && v.trim())[0] || '';
+  }
+
+  if (raw) {
+      const message = raw;
       if (/unable to log in with provided credentials/i.test(message)) {
         return 'Campay API credentials are invalid. In Render, set CAMPAY_USERNAME and CAMPAY_PASSWORD to your application keys from campay.net (not your login email). Demo keys need CAMPAY_BASE_URL=https://demo.campay.net; live keys need https://campay.net.';
       }
       if (/unauthorized mtn number/i.test(message)) {
-        return isCampayProduction()
-          ? 'This number cannot receive MTN MoMo payouts. Use an active MTN MoMo number (67/68/650-654) or an Orange Money number (69/655-659).'
-          : 'This MTN number is not authorized on Campay demo. Add it under your Campay app → Authorized numbers.';
+        if (isCampayProduction()) {
+          const phone = context.phone || '';
+          const operator = phone ? detectCameroonOperator(phone) : null;
+          if (operator === 'MTN') {
+            return `Campay rejected payout to ${phone}. The number is MTN and formatted correctly. Ensure Mobile Money is active on this line, API withdrawal is enabled on your Campay app, and your Campay MTN balance is sufficient. (Campay: ${message})`;
+          }
+          return `Campay rejected this MTN payout (${phone || 'number'}). Use an active MTN MoMo line (67/68/650-654). (Campay: ${message})`;
+        }
+        return 'This MTN number is not authorized on Campay demo. Add it under your Campay app → Authorized numbers.';
       }
       if (/unauthorized orange/i.test(message)) {
         return isCampayProduction()
@@ -57,12 +67,15 @@ function campayErrorMessage(err) {
         return 'Campay wallet balance is too low to send this withdrawal. Top up your Campay account or try a smaller amount.';
       }
       return message;
-    }
+  }
+
+  if (data && typeof data === 'object') {
     const fieldErrors = Object.entries(data)
       .filter(([, v]) => Array.isArray(v) && v[0])
       .map(([k, v]) => `${k}: ${v[0]}`);
     if (fieldErrors.length) return fieldErrors[0];
   }
+
   if (err.response?.status === 401) {
     return 'Campay API authentication failed. Check CAMPAY_USERNAME, CAMPAY_PASSWORD, and CAMPAY_BASE_URL on the server.';
   }
@@ -81,9 +94,9 @@ async function campayPost(path, fields, token) {
   return axios.post(`${CAMPAY_BASE}${path}`, formBody(fields), { headers });
 }
 
-function wrapCampayError(err) {
+function wrapCampayError(err, context = {}) {
   if (err.statusCode) throw err;
-  throw Object.assign(new Error(campayErrorMessage(err)), { statusCode: 502 });
+  throw Object.assign(new Error(campayErrorMessage(err, context)), { statusCode: 502 });
 }
 
 async function fetchTokenWithCredentials() {
@@ -190,6 +203,11 @@ export async function getBalance() {
   return response.data;
 }
 
+function toCampayExternalReference(ref) {
+  if (!ref) return undefined;
+  return String(ref).replace(/-/g, '').slice(0, 40);
+}
+
 export async function initiateWithdrawal({ amount, currency = 'XAF', to, description, externalReference }) {
   const token = await getAccessToken();
 
@@ -201,7 +219,7 @@ export async function initiateWithdrawal({ amount, currency = 'XAF', to, descrip
         currency,
         to,
         description,
-        external_reference: externalReference,
+        external_reference: toCampayExternalReference(externalReference),
       },
       token
     );
@@ -215,8 +233,9 @@ export async function initiateWithdrawal({ amount, currency = 'XAF', to, descrip
     return {
       reference: response.data.reference,
       status: response.data.status || 'PENDING',
+      operator: response.data.operator,
     };
   } catch (err) {
-    wrapCampayError(err);
+    wrapCampayError(err, { phone: to });
   }
 }

@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import PDFDocument from 'pdfkit';
+import { readOwnerLogo } from './objectStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
@@ -51,23 +52,35 @@ function formatPackageLine(pkg) {
   return `${browse} · ${cap}`;
 }
 
-export async function loadBrandingAssets(branding = {}) {
+function localLogoPath(logoUrl) {
+  if (!logoUrl) return null;
+  const match = String(logoUrl).match(/\/uploads\/(.+)$/);
+  if (!match) return null;
+  return path.join(UPLOADS_ROOT, match[1]);
+}
+
+export async function loadBrandingAssets(branding = {}, storedLogoUrl = null) {
   const accent = branding.accentColor || BRAND;
   const brandName = branding.brandName?.trim() || null;
   let logoBuffer = null;
 
+  if (storedLogoUrl) {
+    const file = await readOwnerLogo(storedLogoUrl);
+    if (file) logoBuffer = file.buffer;
+  }
+
   const logoUrl = branding.logoUrl;
-  if (logoUrl?.startsWith('/uploads/')) {
-    const localPath = path.join(UPLOADS_ROOT, logoUrl.replace(/^\/uploads\//, ''));
-    if (fs.existsSync(localPath)) {
+  if (!logoBuffer) {
+    const localPath = localLogoPath(logoUrl);
+    if (localPath && fs.existsSync(localPath)) {
       logoBuffer = fs.readFileSync(localPath);
-    }
-  } else if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
-    try {
-      const response = await axios.get(logoUrl, { responseType: 'arraybuffer', timeout: 10000 });
-      logoBuffer = Buffer.from(response.data);
-    } catch {
-      logoBuffer = null;
+    } else if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
+      try {
+        const response = await axios.get(logoUrl, { responseType: 'arraybuffer', timeout: 10000 });
+        logoBuffer = Buffer.from(response.data);
+      } catch {
+        logoBuffer = null;
+      }
     }
   }
 
@@ -194,13 +207,13 @@ function drawTicket(doc, voucher, box, assets) {
   });
 }
 
-export async function buildVouchersPdf(vouchers, perPage = 6, branding = {}) {
+export async function buildVouchersPdf(vouchers, perPage = 6, branding = {}, storedLogoUrl = null) {
   const layout = PDF_LAYOUTS[perPage] || PDF_LAYOUTS[6];
   const usableW = PAGE_W - MARGIN * 2;
   const usableH = PAGE_H - MARGIN * 2;
   const cellW = usableW / layout.cols;
   const cellH = usableH / layout.rows;
-  const assets = await loadBrandingAssets(branding);
+  const assets = await loadBrandingAssets(branding, storedLogoUrl);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: false });

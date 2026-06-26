@@ -43,10 +43,19 @@ import {
   removeBrandingLogo,
 } from '../controllers/brandingController.js';
 import { exportOwnerAccountingReport } from '../controllers/reportsController.js';
+import { getMe, updateMe, changePassword } from '../controllers/ownerController.js';
+import { getActiveSessions, kickSession } from '../controllers/sessionController.js';
 
 const router = Router();
 
 router.use(authenticateOwner);
+
+router.get('/me', getMe);
+router.patch('/me', updateMe);
+router.post('/change-password', changePassword);
+
+router.get('/sessions', getActiveSessions);
+router.post('/sessions/:transactionId/kick', kickSession);
 
 router.get('/locations', getLocations);
 router.post('/locations', createLocation);

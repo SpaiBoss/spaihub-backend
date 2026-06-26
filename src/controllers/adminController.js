@@ -4,8 +4,10 @@ import * as campay from '../services/campay.js';
 import {
   completeWithdrawalDisbursement,
   campayBalanceDiagnosis,
+  failWithdrawalAndRefund,
 } from '../services/withdrawalDisbursement.js';
 import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
+import { parseTransactionFilters } from '../utils/queryValidation.js';
 import {
   startOfDay,
   endOfDay,
@@ -205,7 +207,11 @@ export async function getAllTransactions(req, res, next) {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = 20;
     const skip = (page - 1) * limit;
-    const where = buildAdminTransactionWhere(req.query);
+
+    const { errors, where } = parseTransactionFilters(req.query);
+    if (errors.length) {
+      return res.status(400).json({ error: errors[0] });
+    }
 
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
@@ -231,23 +237,13 @@ export async function getAllTransactions(req, res, next) {
   }
 }
 
-function buildAdminTransactionWhere(query) {
-  const { ownerId, locationId, status, dateFrom, dateTo } = query;
-  const where = {};
-  if (ownerId) where.ownerId = ownerId;
-  if (locationId) where.locationId = locationId;
-  if (status) where.status = status;
-  if (dateFrom || dateTo) {
-    where.createdAt = {};
-    if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-    if (dateTo) where.createdAt.lte = new Date(dateTo);
-  }
-  return where;
-}
 
 export async function exportAdminTransactions(req, res, next) {
   try {
-    const where = buildAdminTransactionWhere(req.query);
+    const { errors, where } = parseTransactionFilters(req.query);
+    if (errors.length) {
+      return res.status(400).json({ error: errors[0] });
+    }
 
     const transactions = await prisma.transaction.findMany({
       where,
@@ -409,21 +405,8 @@ export async function processWithdrawal(req, res, next) {
     }
 
     if (action === 'REJECTED') {
-      const updated = await prisma.$transaction(async (tx) => {
-        await tx.owner.update({
-          where: { id: withdrawal.ownerId },
-          data: { walletBalance: { increment: withdrawal.amountXaf } },
-        });
-
-        return tx.withdrawal.update({
-          where: { id },
-          data: {
-            status: 'REJECTED',
-            adminNote: adminNote.trim(),
-            processedAt: new Date(),
-          },
-        });
-      });
+      await failWithdrawalAndRefund(withdrawal, adminNote.trim());
+      const updated = await prisma.withdrawal.findUnique({ where: { id } });
 
       try {
         await sendWithdrawalStatusEmail(withdrawal.owner.email, {

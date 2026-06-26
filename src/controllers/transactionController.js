@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { parseTransactionFilters } from '../utils/queryValidation.js';
 
 export async function getTransactions(req, res, next) {
   try {
@@ -6,16 +7,12 @@ export async function getTransactions(req, res, next) {
     const limit = 20;
     const skip = (page - 1) * limit;
 
-    const { locationId, status, dateFrom, dateTo } = req.query;
-
-    const where = { ownerId: req.owner.id };
-    if (locationId) where.locationId = locationId;
-    if (status) where.status = status;
-    if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-      if (dateTo) where.createdAt.lte = new Date(dateTo);
+    const { errors, where: filterWhere } = parseTransactionFilters(req.query);
+    if (errors.length) {
+      return res.status(400).json({ error: errors[0] });
     }
+
+    const where = { ownerId: req.owner.id, ...filterWhere };
 
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
@@ -51,16 +48,12 @@ export async function getTransactions(req, res, next) {
 
 export async function exportTransactions(req, res, next) {
   try {
-    const { locationId, status, dateFrom, dateTo } = req.query;
-
-    const where = { ownerId: req.owner.id };
-    if (locationId) where.locationId = locationId;
-    if (status) where.status = status;
-    if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-      if (dateTo) where.createdAt.lte = new Date(dateTo);
+    const { errors, where: filterWhere } = parseTransactionFilters(req.query);
+    if (errors.length) {
+      return res.status(400).json({ error: errors[0] });
     }
+
+    const where = { ownerId: req.owner.id, ...filterWhere };
 
     const transactions = await prisma.transaction.findMany({
       where,

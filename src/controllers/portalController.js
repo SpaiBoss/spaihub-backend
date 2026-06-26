@@ -14,6 +14,41 @@ import { resolvePortalBranding, brandingSelectFields } from '../utils/portalBran
 
 const FEE_PERCENT = Number(process.env.PLATFORM_FEE_PERCENT) || 2;
 
+function portalAccessError(router) {
+  if (!router) {
+    return { status: 404, error: 'Router not found' };
+  }
+  if (router.location.owner.status !== 'ACTIVE') {
+    return {
+      status: 403,
+      error: 'This hotspot is temporarily unavailable. Contact the location owner.',
+    };
+  }
+  if (!router.location.isActive) {
+    return {
+      status: 403,
+      error: 'This location is not accepting new connections right now.',
+    };
+  }
+  return null;
+}
+
+async function loadPortalRouter(routerToken, { includePackages = false } = {}) {
+  return prisma.router.findFirst({
+    where: { routerToken, isActive: true },
+    include: {
+      location: {
+        include: {
+          owner: { select: { status: true, ...brandingSelectFields() } },
+          ...(includePackages
+            ? { packages: { where: { isActive: true }, orderBy: { priceXaf: 'asc' } } }
+            : {}),
+        },
+      },
+    },
+  });
+}
+
 function normalizeVoucherCode(code) {
   return code.trim().toUpperCase().replace(/\s+/g, '');
 }
@@ -38,23 +73,13 @@ export async function getPortal(req, res, next) {
   try {
     const { routerToken } = req.params;
 
-    const router = await prisma.router.findFirst({
-      where: { routerToken, isActive: true },
-      include: {
-        location: {
-          include: {
-            owner: { select: brandingSelectFields() },
-            packages: { where: { isActive: true }, orderBy: { priceXaf: 'asc' } },
-          },
-        },
-      },
-    });
-
-    if (!router) {
-      return res.status(404).json({ error: 'Router not found' });
+    const router = await loadPortalRouter(routerToken, { includePackages: true });
+    const accessError = portalAccessError(router);
+    if (accessError) {
+      return res.status(accessError.status).json({ error: accessError.error });
     }
 
-    const branding = resolvePortalBranding(router.location.owner);
+    const branding = resolvePortalBranding(router.location.owner, req);
     const packages = router.location.packages.map((pkg) => {
       if (branding.showUploadSpeed) return pkg;
       const { uploadSpeedMbPerSec, ...publicPkg } = pkg;
@@ -136,13 +161,10 @@ export async function initiatePayment(req, res, next) {
 
     const normalizedMac = normalizeMac(macAddress);
 
-    const router = await prisma.router.findFirst({
-      where: { routerToken, isActive: true },
-      include: { location: true },
-    });
-
-    if (!router) {
-      return res.status(404).json({ error: 'Router not found' });
+    const router = await loadPortalRouter(routerToken);
+    const accessError = portalAccessError(router);
+    if (accessError) {
+      return res.status(accessError.status).json({ error: accessError.error });
     }
 
     const pkg = await prisma.package.findFirst({
@@ -151,6 +173,26 @@ export async function initiatePayment(req, res, next) {
 
     if (!pkg) {
       return res.status(404).json({ error: 'Package not found' });
+    }
+
+    const trimmedDeviceId = deviceId.trim();
+    const activeSession = await findActiveSession(router.id, { deviceId: trimmedDeviceId });
+    if (activeSession) {
+      return res.status(409).json({ error: 'You already have an active session on this network.' });
+    }
+
+    const pendingPayment = await prisma.transaction.findFirst({
+      where: {
+        routerId: router.id,
+        deviceId: trimmedDeviceId,
+        packageId: pkg.id,
+        status: 'PENDING',
+      },
+    });
+    if (pendingPayment) {
+      return res.status(409).json({
+        error: 'A payment for this package is already pending. Approve it on your phone or wait a few minutes.',
+      });
     }
 
     const platformFeeXaf = Math.floor(pkg.priceXaf * (FEE_PERCENT / 100));
@@ -225,13 +267,10 @@ export async function redeemVoucher(req, res, next) {
     const normalizedMac = normalizeMac(macAddress);
     const normalizedPin = normalizePin(pin);
 
-    const router = await prisma.router.findFirst({
-      where: { routerToken, isActive: true },
-      include: { location: true },
-    });
-
-    if (!router) {
-      return res.status(404).json({ error: 'Router not found' });
+    const router = await loadPortalRouter(routerToken);
+    const accessError = portalAccessError(router);
+    if (accessError) {
+      return res.status(accessError.status).json({ error: accessError.error });
     }
 
     const normalizedCode = normalizeVoucherCode(code);

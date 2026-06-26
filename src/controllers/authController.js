@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../utils/prisma.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
+import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
 
 export async function register(req, res, next) {
   try {
@@ -12,11 +13,15 @@ export async function register(req, res, next) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address' });
+    }
+
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    const existing = await prisma.owner.findUnique({ where: { email: email.toLowerCase() } });
+    const existing = await prisma.owner.findUnique({ where: { email: normalizeEmail(email) } });
     if (existing) {
       return res.status(409).json({ error: 'Email already registered' });
     }
@@ -27,7 +32,7 @@ export async function register(req, res, next) {
     const owner = await prisma.owner.create({
       data: {
         name: name.trim(),
-        email: email.toLowerCase(),
+        email: normalizeEmail(email),
         passwordHash,
         emailVerifyToken,
         status: 'PENDING',
@@ -117,7 +122,11 @@ export async function forgotPassword(req, res, next) {
       return res.status(400).json({ error: 'Email is required' });
     }
 
-    const owner = await prisma.owner.findUnique({ where: { email: email.toLowerCase() } });
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address' });
+    }
+
+    const owner = await prisma.owner.findUnique({ where: { email: normalizeEmail(email) } });
     if (owner) {
       const resetPasswordToken = uuidv4();
       const resetPasswordExpiry = new Date(Date.now() + 60 * 60 * 1000);
@@ -135,6 +144,24 @@ export async function forgotPassword(req, res, next) {
     }
 
     res.json({ message: 'If an account exists with that email, a reset link has been sent.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function validateResetToken(req, res, next) {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(400).json({ valid: false, error: 'Reset token is required' });
+    }
+
+    const owner = await prisma.owner.findFirst({ where: { resetPasswordToken: token } });
+    if (!owner || !owner.resetPasswordExpiry || owner.resetPasswordExpiry < new Date()) {
+      return res.status(400).json({ valid: false, error: 'Invalid or expired reset link' });
+    }
+
+    res.json({ valid: true });
   } catch (err) {
     next(err);
   }

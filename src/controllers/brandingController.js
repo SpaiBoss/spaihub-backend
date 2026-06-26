@@ -1,11 +1,6 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import prisma from '../utils/prisma.js';
 import { parseBrandingInput, resolvePortalBranding } from '../utils/portalBranding.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOADS_DIR = path.join(__dirname, '../../uploads/logos');
+import { deleteOwnerLogo, getStorageMode, uploadOwnerLogo } from '../services/objectStorage.js';
 
 const MAX_LOGO_BYTES = 512 * 1024;
 const ALLOWED_MIME = {
@@ -13,10 +8,6 @@ const ALLOWED_MIME = {
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
 };
-
-async function ensureUploadsDir() {
-  await fs.mkdir(UPLOADS_DIR, { recursive: true });
-}
 
 export async function getBranding(req, res, next) {
   try {
@@ -34,7 +25,8 @@ export async function getBranding(req, res, next) {
 
     res.json({
       ...owner,
-      resolved: resolvePortalBranding(owner),
+      resolved: resolvePortalBranding(owner, req),
+      logoStorage: getStorageMode(),
     });
   } catch (err) {
     next(err);
@@ -63,7 +55,7 @@ export async function updateBranding(req, res, next) {
 
     res.json({
       ...owner,
-      resolved: resolvePortalBranding(owner),
+      resolved: resolvePortalBranding(owner, req),
     });
   } catch (err) {
     next(err);
@@ -91,12 +83,15 @@ export async function uploadBrandingLogo(req, res, next) {
       return res.status(400).json({ error: 'Logo must be 512 KB or smaller' });
     }
 
-    await ensureUploadsDir();
-    const filename = `${req.owner.id}.${ext}`;
-    const filepath = path.join(UPLOADS_DIR, filename);
-    await fs.writeFile(filepath, buffer);
+    const existing = await prisma.owner.findUnique({
+      where: { id: req.owner.id },
+      select: { portalLogoUrl: true },
+    });
+    if (existing?.portalLogoUrl) {
+      await deleteOwnerLogo(existing.portalLogoUrl);
+    }
 
-    const portalLogoUrl = `/uploads/logos/${filename}`;
+    const portalLogoUrl = await uploadOwnerLogo(req.owner.id, buffer, ext);
     const owner = await prisma.owner.update({
       where: { id: req.owner.id },
       data: { portalLogoUrl },
@@ -112,9 +107,12 @@ export async function uploadBrandingLogo(req, res, next) {
 
     res.json({
       ...owner,
-      resolved: resolvePortalBranding(owner),
+      resolved: resolvePortalBranding(owner, req),
     });
   } catch (err) {
+    if (err.name === 'CredentialsProviderError' || err.Code === 'InvalidAccessKeyId') {
+      return res.status(503).json({ error: 'Logo storage is misconfigured. Check R2 credentials on the server.' });
+    }
     next(err);
   }
 }
@@ -122,9 +120,8 @@ export async function uploadBrandingLogo(req, res, next) {
 export async function removeBrandingLogo(req, res, next) {
   try {
     const owner = await prisma.owner.findUnique({ where: { id: req.owner.id } });
-    if (owner?.portalLogoUrl?.startsWith('/uploads/logos/')) {
-      const filepath = path.join(__dirname, '../..', owner.portalLogoUrl);
-      await fs.unlink(filepath).catch(() => {});
+    if (owner?.portalLogoUrl) {
+      await deleteOwnerLogo(owner.portalLogoUrl);
     }
 
     const updated = await prisma.owner.update({
@@ -142,7 +139,7 @@ export async function removeBrandingLogo(req, res, next) {
 
     res.json({
       ...updated,
-      resolved: resolvePortalBranding(updated),
+      resolved: resolvePortalBranding(updated, req),
     });
   } catch (err) {
     next(err);

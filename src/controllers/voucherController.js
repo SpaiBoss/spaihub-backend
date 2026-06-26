@@ -235,9 +235,9 @@ export async function exportVouchersPdf(req, res, next) {
       where: { id: req.owner.id },
       select: brandingSelectFields(),
     });
-    const branding = resolvePortalBranding(owner);
+    const branding = resolvePortalBranding(owner, req);
 
-    const pdf = await buildVouchersPdf(vouchers, perPageNum, branding);
+    const pdf = await buildVouchersPdf(vouchers, perPageNum, branding, owner.portalLogoUrl);
     const brandSlug = branding.brandName
       ? branding.brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)
       : 'vouchers';

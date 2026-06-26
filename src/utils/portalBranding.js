@@ -4,16 +4,44 @@ export function isValidAccentColor(value) {
   return typeof value === 'string' && HEX_COLOR_RE.test(value.trim());
 }
 
-export function resolvePortalBranding(owner) {
-  const apiBase = (process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 4000}`).replace(
-    /\/$/,
-    ''
-  );
-
-  let logoUrl = owner?.portalLogoUrl?.trim() || null;
-  if (logoUrl?.startsWith('/uploads/')) {
-    logoUrl = `${apiBase}${logoUrl}`;
+export function getPublicApiBase(req) {
+  if (process.env.API_BASE_URL?.trim()) {
+    return process.env.API_BASE_URL.trim().replace(/\/$/, '');
   }
+  if (req) {
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+    const host = req.get('x-forwarded-host') || req.get('host');
+    if (host) return `${proto}://${host}`;
+  }
+  return `http://localhost:${process.env.PORT || 4000}`;
+}
+
+export function resolveStoredLogoUrl(stored, req) {
+  if (!stored) return null;
+  const trimmed = stored.trim();
+
+  const apiBase = getPublicApiBase(req);
+  const embeddedLogo = trimmed.match(/logos\/([0-9a-f-]{36}\.(?:png|jpe?g|webp))(?:\?.*)?$/i);
+  if (embeddedLogo) {
+    return `${apiBase}/media/logos/${embeddedLogo[1]}`;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('/uploads/')) {
+    return `${apiBase}${trimmed}`;
+  }
+  if (trimmed.startsWith('logos/')) {
+    return `${apiBase}/media/${trimmed}`;
+  }
+
+  return trimmed;
+}
+
+export function resolvePortalBranding(owner, req) {
+  const logoUrl = resolveStoredLogoUrl(owner?.portalLogoUrl, req);
 
   return {
     brandName: owner?.portalBrandName?.trim() || null,

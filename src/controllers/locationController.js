@@ -17,8 +17,8 @@ export async function getLocations(req, res, next) {
     const locations = await prisma.location.findMany({
       where: { ownerId: req.owner.id },
       include: {
-        _count: { select: { routers: true } },
-        routers: { select: { status: true } },
+        _count: { select: { routers: { where: { isActive: true } } } },
+        routers: { where: { isActive: true }, select: { status: true } },
       },
       orderBy: { createdAt: 'desc' },
     });

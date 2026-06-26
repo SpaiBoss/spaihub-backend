@@ -1,10 +1,13 @@
 import prisma from '../utils/prisma.js';
+import { normalizeCameroonMobileLocal } from '../utils/phone.js';
+import { sendWithdrawalStatusEmail } from '../services/email.js';
+import {
+  completeWithdrawalDisbursement,
+  failWithdrawalAndRefund,
+  isAutoDisburseEnabled,
+} from '../services/withdrawalDisbursement.js';
 
 const MIN_WITHDRAWAL = 1000;
-
-function isValidPhone(phone) {
-  return /^6\d{8}$/.test(phone);
-}
 
 export async function getWallet(req, res, next) {
   try {
@@ -53,8 +56,9 @@ export async function requestWithdrawal(req, res, next) {
       return res.status(400).json({ error: 'Payment method must be MTN_MOMO or ORANGE_MONEY' });
     }
 
-    if (!isValidPhone(phoneNumber)) {
-      return res.status(400).json({ error: 'Invalid phone number format' });
+    const localPhone = normalizeCameroonMobileLocal(phoneNumber);
+    if (!localPhone) {
+      return res.status(400).json({ error: 'Enter a valid Cameroon mobile number (e.g. 677123456)' });
     }
 
     const withdrawal = await prisma.$transaction(async (tx) => {
@@ -73,14 +77,40 @@ export async function requestWithdrawal(req, res, next) {
         data: {
           ownerId: req.owner.id,
           amountXaf: Number(amountXaf),
-          phoneNumber,
+          phoneNumber: localPhone,
           method,
           status: 'PENDING',
         },
       });
     });
 
-    res.status(201).json(withdrawal);
+    if (!isAutoDisburseEnabled()) {
+      return res.status(201).json(withdrawal);
+    }
+
+    try {
+      const completed = await completeWithdrawalDisbursement(withdrawal.id);
+
+      try {
+        const owner = await prisma.owner.findUnique({ where: { id: req.owner.id } });
+        await sendWithdrawalStatusEmail(owner.email, {
+          amountXaf: completed.amountXaf,
+          status: 'APPROVED',
+        });
+      } catch {
+        // Email failure shouldn't block withdrawal
+      }
+
+      return res.status(201).json(completed);
+    } catch (err) {
+      const message = err.message || 'Mobile Money transfer failed';
+      await failWithdrawalAndRefund(withdrawal, message);
+
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: message });
+      }
+      return res.status(502).json({ error: message });
+    }
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message });

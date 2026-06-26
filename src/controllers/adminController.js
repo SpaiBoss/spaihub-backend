@@ -1,6 +1,9 @@
 import prisma from '../utils/prisma.js';
 import { sendWithdrawalStatusEmail } from '../services/email.js';
 import {
+  completeWithdrawalDisbursement,
+} from '../services/withdrawalDisbursement.js';
+import {
   startOfDay,
   endOfDay,
   startOfMonth,
@@ -374,35 +377,55 @@ export async function processWithdrawal(req, res, next) {
       return res.status(400).json({ error: 'Admin note is required when rejecting' });
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      if (action === 'REJECTED') {
+    if (action === 'REJECTED') {
+      const updated = await prisma.$transaction(async (tx) => {
         await tx.owner.update({
           where: { id: withdrawal.ownerId },
           data: { walletBalance: { increment: withdrawal.amountXaf } },
         });
+
+        return tx.withdrawal.update({
+          where: { id },
+          data: {
+            status: 'REJECTED',
+            adminNote: adminNote.trim(),
+            processedAt: new Date(),
+          },
+        });
+      });
+
+      try {
+        await sendWithdrawalStatusEmail(withdrawal.owner.email, {
+          amountXaf: withdrawal.amountXaf,
+          status: 'REJECTED',
+          adminNote: adminNote.trim(),
+        });
+      } catch {
+        // Email failure shouldn't block processing
       }
 
-      return tx.withdrawal.update({
-        where: { id },
-        data: {
-          status: action,
-          adminNote: adminNote?.trim() || null,
-          processedAt: new Date(),
-        },
-      });
-    });
-
-    try {
-      await sendWithdrawalStatusEmail(withdrawal.owner.email, {
-        amountXaf: withdrawal.amountXaf,
-        status: action,
-        adminNote: adminNote?.trim(),
-      });
-    } catch {
-      // Email failure shouldn't block processing
+      return res.json(updated);
     }
 
-    res.json(updated);
+    try {
+      const updated = await completeWithdrawalDisbursement(withdrawal.id);
+
+      try {
+        await sendWithdrawalStatusEmail(withdrawal.owner.email, {
+          amountXaf: withdrawal.amountXaf,
+          status: 'APPROVED',
+        });
+      } catch {
+        // Email failure shouldn't block processing
+      }
+
+      return res.json(updated);
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
+      return res.status(502).json({ error: err.message || 'Mobile Money transfer failed' });
+    }
   } catch (err) {
     next(err);
   }

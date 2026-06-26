@@ -148,3 +148,34 @@ export async function getTransactionStatus(reference) {
     wrapCampayError(err);
   }
 }
+
+export async function initiateWithdrawal({ amount, currency = 'XAF', to, description, externalReference }) {
+  const token = await getAccessToken();
+
+  try {
+    const response = await campayPost(
+      '/api/withdraw/',
+      {
+        amount: String(amount),
+        currency,
+        to,
+        description,
+        external_reference: externalReference,
+      },
+      token
+    );
+
+    if (!response.data?.reference) {
+      throw Object.assign(new Error('Withdrawal service did not return a transaction reference.'), {
+        statusCode: 502,
+      });
+    }
+
+    return {
+      reference: response.data.reference,
+      status: response.data.status || 'PENDING',
+    };
+  } catch (err) {
+    wrapCampayError(err);
+  }
+}

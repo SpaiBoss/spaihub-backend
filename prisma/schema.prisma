@@ -176,9 +176,10 @@ model Withdrawal {
   amountXaf   Int
   phoneNumber String
   method      PaymentMethod
-  status      WithdrawalStatus @default(PENDING)
-  adminNote   String?
-  createdAt   DateTime         @default(now())
+  status          WithdrawalStatus @default(PENDING)
+  adminNote       String?
+  campayReference String?
+  createdAt       DateTime         @default(now())
   processedAt DateTime?
 
   owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)

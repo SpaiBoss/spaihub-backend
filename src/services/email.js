@@ -77,7 +77,7 @@ export async function sendWithdrawalStatusEmail(email, { amountXaf, status, admi
 
   const body =
     status === 'APPROVED'
-      ? `<p>Your withdrawal request for <strong>${amountXaf.toLocaleString()} XAF</strong> has been approved and will be processed shortly.</p>`
+      ? `<p>Your withdrawal of <strong>${amountXaf.toLocaleString()} XAF</strong> has been sent to your Mobile Money account.</p>`
       : `<p>Your withdrawal request for <strong>${amountXaf.toLocaleString()} XAF</strong> was rejected.</p>
          ${adminNote ? `<p><strong>Reason:</strong> ${adminNote}</p><p>The amount has been refunded to your wallet balance.</p>` : ''}`;
 

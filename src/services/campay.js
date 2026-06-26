@@ -1,11 +1,18 @@
 import axios from 'axios';
 
-const CAMPAY_BASE = (process.env.CAMPAY_BASE_URL || 'https://demo.campay.net').replace(/\/$/, '');
+function normalizeCampayBase(url) {
+  let base = (url || 'https://demo.campay.net').trim().replace(/\/$/, '');
+  if (base.endsWith('/api')) base = base.slice(0, -4);
+  return base;
+}
+
+const CAMPAY_BASE = normalizeCampayBase(process.env.CAMPAY_BASE_URL);
 
 let cachedToken = null;
 let tokenExpiry = 0;
 
 function ensureCampayConfig() {
+  if (process.env.CAMPAY_PERMANENT_ACCESS_TOKEN?.trim()) return;
   if (!process.env.CAMPAY_USERNAME?.trim() || !process.env.CAMPAY_PASSWORD?.trim()) {
     throw Object.assign(
       new Error('Mobile Money payments are not configured yet. Please contact support.'),
@@ -23,7 +30,7 @@ function campayErrorMessage(err) {
     if (parts.length) {
       const message = parts[0];
       if (/unable to log in with provided credentials/i.test(message)) {
-        return 'Campay API credentials are invalid. Use your application username and password from campay.net (not your login email), and match CAMPAY_BASE_URL to demo or live.';
+        return 'Campay API credentials are invalid. In Render, set CAMPAY_USERNAME and CAMPAY_PASSWORD to your application keys from campay.net (not your login email). Demo keys need CAMPAY_BASE_URL=https://demo.campay.net; live keys need https://campay.net.';
       }
       return message;
     }
@@ -55,24 +62,42 @@ function wrapCampayError(err) {
   throw Object.assign(new Error(campayErrorMessage(err)), { statusCode: 502 });
 }
 
+async function fetchTokenWithCredentials() {
+  const username = process.env.CAMPAY_USERNAME.trim();
+  const password = process.env.CAMPAY_PASSWORD.trim();
+  const url = `${CAMPAY_BASE}/api/token/`;
+  const body = { username, password };
+
+  try {
+    const response = await axios.post(url, body, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (response.data?.token) return response.data.token;
+  } catch (jsonErr) {
+    try {
+      const response = await campayPost('/api/token/', body);
+      if (response.data?.token) return response.data.token;
+    } catch {
+      wrapCampayError(jsonErr);
+    }
+  }
+
+  throw Object.assign(new Error('Payment service returned an invalid token.'), { statusCode: 502 });
+}
+
 export async function getAccessToken() {
   ensureCampayConfig();
+
+  const permanent = process.env.CAMPAY_PERMANENT_ACCESS_TOKEN?.trim();
+  if (permanent) return permanent;
 
   if (cachedToken && Date.now() < tokenExpiry) {
     return cachedToken;
   }
 
   try {
-    const response = await campayPost('/api/token/', {
-      username: process.env.CAMPAY_USERNAME.trim(),
-      password: process.env.CAMPAY_PASSWORD.trim(),
-    });
-
-    if (!response.data?.token) {
-      throw Object.assign(new Error('Payment service returned an invalid token.'), { statusCode: 502 });
-    }
-
-    cachedToken = response.data.token;
+    const token = await fetchTokenWithCredentials();
+    cachedToken = token;
     tokenExpiry = Date.now() + 50 * 60 * 1000;
     return cachedToken;
   } catch (err) {

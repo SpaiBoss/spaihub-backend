@@ -49,7 +49,7 @@ function campayErrorMessage(err, context = {}) {
           const phone = context.phone || '';
           const operator = phone ? detectCameroonOperator(phone) : null;
           if (operator === 'MTN') {
-            return `Campay rejected payout to ${phone}. The number is MTN and formatted correctly. Ensure Mobile Money is active on this line, API withdrawal is enabled on your Campay app, and your Campay MTN balance is sufficient. (Campay: ${message})`;
+            return `Campay rejected payout to ${phone}. MoMo account exists but your Campay MTN payout balance may be empty — API withdrawals use mtn_balance, not only dashboard total. Enable API withdrawal and fund the MTN wallet on campay.net. (Campay: ${message})`;
           }
           return `Campay rejected this MTN payout (${phone || 'number'}). Use an active MTN MoMo line (67/68/650-654). (Campay: ${message})`;
         }

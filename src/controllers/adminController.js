@@ -3,6 +3,7 @@ import { sendWithdrawalStatusEmail } from '../services/email.js';
 import * as campay from '../services/campay.js';
 import {
   completeWithdrawalDisbursement,
+  campayBalanceDiagnosis,
 } from '../services/withdrawalDisbursement.js';
 import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
 import {
@@ -479,6 +480,9 @@ export async function verifyWithdrawalCampay(req, res, next) {
             orange: Number(balance.orange_balance ?? 0),
             currency: balance.currency || 'XAF',
           }
+        : null,
+      balanceDiagnosis: balance
+        ? campayBalanceDiagnosis(balance, operator, withdrawal.amountXaf)
         : null,
       balanceError,
       campayBaseUrl: process.env.CAMPAY_BASE_URL || '(default)',

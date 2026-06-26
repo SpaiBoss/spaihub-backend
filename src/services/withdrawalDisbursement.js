@@ -13,7 +13,7 @@ function isAutoDisburseEnabled() {
   return process.env.AUTO_DISBURSE_WITHDRAWALS !== 'false';
 }
 
-export { isAutoDisburseEnabled };
+export { isAutoDisburseEnabled, campayBalanceDiagnosis };
 
 async function verifyRecipientMoMo(campayPhone) {
   try {
@@ -42,32 +42,31 @@ async function verifyRecipientMoMo(campayPhone) {
   }
 }
 
+function campayBalanceDiagnosis(balance, operator, amountXaf) {
+  const total = Number(balance?.total_balance ?? 0);
+  const mtn = Number(balance?.mtn_balance ?? 0);
+  const orange = Number(balance?.orange_balance ?? 0);
+  const network = operator === 'ORANGE' ? 'Orange' : 'MTN';
+  const networkBalance = operator === 'ORANGE' ? orange : mtn;
+
+  if (networkBalance >= amountXaf) return null;
+
+  if (total >= amountXaf && networkBalance < amountXaf) {
+    return `Campay has ${total.toLocaleString()} XAF total but ${network} payout balance is ${networkBalance.toLocaleString()} XAF. In campay.net, move or deposit funds into your ${network} API wallet before sending MoMo payouts.`;
+  }
+
+  if (total === 0 && mtn === 0 && orange === 0) {
+    return 'Campay API shows 0 balance. Use API keys from the same Campay application that holds your funds, or top up that application wallet on campay.net.';
+  }
+
+  return `Campay ${network} balance (${networkBalance.toLocaleString()} XAF) is too low for a ${amountXaf.toLocaleString()} XAF payout.`;
+}
+
 async function assertCampayBalance(amountXaf, operator) {
-  try {
-    const balance = await campay.getBalance();
-    const total = Number(balance?.total_balance ?? 0);
-    const networkBalance =
-      operator === 'ORANGE'
-        ? Number(balance?.orange_balance ?? 0)
-        : Number(balance?.mtn_balance ?? 0);
-
-    if (total < amountXaf) {
-      throw Object.assign(
-        new Error('Campay wallet balance is too low to process this withdrawal. Contact support.'),
-        { statusCode: 503 }
-      );
-    }
-
-    if (networkBalance > 0 && networkBalance < amountXaf) {
-      const network = operator === 'ORANGE' ? 'Orange' : 'MTN';
-      throw Object.assign(
-        new Error(`Campay ${network} balance is too low for this withdrawal. Try again later or contact support.`),
-        { statusCode: 503 }
-      );
-    }
-  } catch (err) {
-    if (err.statusCode) throw err;
-    // Balance endpoint may fail if API withdrawal isn't enabled yet.
+  const balance = await campay.getBalance();
+  const diagnosis = campayBalanceDiagnosis(balance, operator, amountXaf);
+  if (diagnosis) {
+    throw Object.assign(new Error(diagnosis), { statusCode: 503 });
   }
 }
 

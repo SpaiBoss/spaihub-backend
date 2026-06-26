@@ -364,8 +364,8 @@ export async function processWithdrawal(req, res, next) {
     const { id } = req.params;
     const { action, adminNote } = req.body;
 
-    if (!['APPROVED', 'REJECTED'].includes(action)) {
-      return res.status(400).json({ error: 'Action must be APPROVED or REJECTED' });
+    if (!['APPROVED', 'REJECTED', 'MANUAL_APPROVED'].includes(action)) {
+      return res.status(400).json({ error: 'Action must be APPROVED, MANUAL_APPROVED, or REJECTED' });
     }
 
     const withdrawal = await prisma.withdrawal.findUnique({
@@ -383,6 +383,29 @@ export async function processWithdrawal(req, res, next) {
 
     if (action === 'REJECTED' && !adminNote?.trim()) {
       return res.status(400).json({ error: 'Admin note is required when rejecting' });
+    }
+
+    if (action === 'MANUAL_APPROVED') {
+      const note = adminNote?.trim() || 'Paid manually via Campay dashboard';
+      const updated = await prisma.withdrawal.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          adminNote: note,
+          processedAt: new Date(),
+        },
+      });
+
+      try {
+        await sendWithdrawalStatusEmail(withdrawal.owner.email, {
+          amountXaf: withdrawal.amountXaf,
+          status: 'APPROVED',
+        });
+      } catch {
+        // Email failure shouldn't block processing
+      }
+
+      return res.json(updated);
     }
 
     if (action === 'REJECTED') {
@@ -486,7 +509,9 @@ export async function verifyWithdrawalCampay(req, res, next) {
         ? campayBalanceDiagnosis(balance, operator, withdrawal.amountXaf)
         : null,
       balanceError,
-      campayBaseUrl: process.env.CAMPAY_BASE_URL || '(default)',
+      campayBaseUrl: campay.getCampayBaseUrl(),
+      apiWithdrawalHint:
+        'If Send MoMo fails with Unauthorized MTN number: enable API withdrawal in app Settings on campay.net, or pay via Campay dashboard Withdraw then Mark paid manually here.',
     });
   } catch (err) {
     next(err);

@@ -15,6 +15,10 @@ function normalizeCampayBase(url) {
 
 const CAMPAY_BASE = normalizeCampayBase(process.env.CAMPAY_BASE_URL);
 
+export function getCampayBaseUrl() {
+  return CAMPAY_BASE;
+}
+
 export function isCampayProduction() {
   return CAMPAY_BASE.includes('campay.net') && !CAMPAY_BASE.includes('demo.');
 }
@@ -51,7 +55,7 @@ function campayErrorMessage(err, context = {}) {
           const phone = context.phone || '';
           const operator = phone ? detectCameroonOperator(phone) : null;
           if (operator === 'MTN') {
-            return `Campay rejected payout to ${phone}. MoMo account exists but your Campay MTN payout balance may be empty — API withdrawals use mtn_balance, not only dashboard total. Enable API withdrawal and fund the MTN wallet on campay.net. (Campay: ${message})`;
+            return `Campay blocked API payout to ${phone} ("Unauthorized MTN number"). The MoMo number is valid. Fix: open hotspot-sale on campay.net → Settings → enable API withdrawal. If already on, Campay must activate MTN API disbursements on your account — WhatsApp +237652007684. Until then, use Campay dashboard Withdraw to send MoMo, then click Mark paid manually in SpaiHub admin.`;
           }
           return `Campay rejected this MTN payout (${phone || 'number'}). Use an active MTN MoMo line (67/68/650-654). (Campay: ${message})`;
         }
@@ -251,19 +255,30 @@ function toCampayExternalReference(ref) {
 export async function initiateWithdrawal({ amount, currency = 'XAF', to, description, externalReference }) {
   const token = await getAccessToken();
   const fields = {
-    amount: String(amount),
+    amount: Number(amount),
     currency,
     to,
     description,
-    external_reference: toCampayExternalReference(externalReference) || '',
   };
+  const extRef = toCampayExternalReference(externalReference);
+  if (extRef) fields.external_reference = extRef;
 
   try {
     let response;
     try {
       response = await campayPostJson('/api/withdraw/', fields, token);
     } catch {
-      response = await campayPost('/api/withdraw/', fields, token);
+      response = await campayPost(
+        '/api/withdraw/',
+        {
+          amount: String(amount),
+          currency,
+          to,
+          description,
+          ...(extRef ? { external_reference: extRef } : {}),
+        },
+        token
+      );
     }
 
     if (!response.data?.reference) {

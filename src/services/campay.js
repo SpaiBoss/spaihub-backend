@@ -1,12 +1,20 @@
 import axios from 'axios';
 
+function defaultCampayBase() {
+  return process.env.NODE_ENV === 'production' ? 'https://campay.net' : 'https://demo.campay.net';
+}
+
 function normalizeCampayBase(url) {
-  let base = (url || 'https://demo.campay.net').trim().replace(/\/$/, '');
+  let base = (url || defaultCampayBase()).trim().replace(/\/$/, '');
   if (base.endsWith('/api')) base = base.slice(0, -4);
   return base;
 }
 
 const CAMPAY_BASE = normalizeCampayBase(process.env.CAMPAY_BASE_URL);
+
+export function isCampayProduction() {
+  return CAMPAY_BASE.includes('campay.net') && !CAMPAY_BASE.includes('demo.');
+}
 
 let cachedToken = null;
 let tokenExpiry = 0;
@@ -33,10 +41,20 @@ function campayErrorMessage(err) {
         return 'Campay API credentials are invalid. In Render, set CAMPAY_USERNAME and CAMPAY_PASSWORD to your application keys from campay.net (not your login email). Demo keys need CAMPAY_BASE_URL=https://demo.campay.net; live keys need https://campay.net.';
       }
       if (/unauthorized mtn number/i.test(message)) {
-        return 'This MTN number is not authorized on Campay. On demo, add the number under your Campay app settings (Authorized numbers). On live, use an active MTN MoMo number that matches the selected network.';
+        return isCampayProduction()
+          ? 'This number cannot receive MTN MoMo payouts. Use an active MTN MoMo number (67/68/650-654) or an Orange Money number (69/655-659).'
+          : 'This MTN number is not authorized on Campay demo. Add it under your Campay app → Authorized numbers.';
       }
       if (/unauthorized orange/i.test(message)) {
-        return 'This Orange number is not authorized on Campay. On demo, add the number under your Campay app settings (Authorized numbers). On live, use an active Orange Money number.';
+        return isCampayProduction()
+          ? 'This number cannot receive Orange Money payouts. Use an active Orange Money number (69/655-659).'
+          : 'This Orange number is not authorized on Campay demo. Add it under your Campay app → Authorized numbers.';
+      }
+      if (/api withdrawal|withdrawal.*not enabled|withdraw.*disabled/i.test(message)) {
+        return 'Campay API withdrawal is not enabled. In campay.net → Applications → your app, turn on API withdrawal.';
+      }
+      if (/insufficient|not enough balance/i.test(message)) {
+        return 'Campay wallet balance is too low to send this withdrawal. Top up your Campay account or try a smaller amount.';
       }
       return message;
     }
@@ -153,6 +171,23 @@ export async function getTransactionStatus(reference) {
   } catch (err) {
     wrapCampayError(err);
   }
+}
+
+export async function getHolderInfo(phoneNumber) {
+  const token = await getAccessToken();
+  const response = await axios.get(`${CAMPAY_BASE}/api/holder_info/`, {
+    params: { phone_number: phoneNumber },
+    headers: { Authorization: `Token ${token}` },
+  });
+  return response.data;
+}
+
+export async function getBalance() {
+  const token = await getAccessToken();
+  const response = await axios.get(`${CAMPAY_BASE}/api/balance/`, {
+    headers: { Authorization: `Token ${token}` },
+  });
+  return response.data;
 }
 
 export async function initiateWithdrawal({ amount, currency = 'XAF', to, description, externalReference }) {

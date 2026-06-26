@@ -17,12 +17,17 @@ export function normalizeCameroonMobileLocal(phone) {
   return null;
 }
 
-/** MTN or ORANGE based on Cameroon mobile prefixes. */
+/** MTN or ORANGE based on Cameroon mobile prefixes (650-654 MTN, 655-659 Orange, 67-68 MTN, 69 Orange). */
 export function detectCameroonOperator(phone) {
   const local = normalizeCameroonMobileLocal(phone);
   if (!local) return null;
+
+  const prefix3 = local.slice(0, 3);
+  if (prefix3 >= '655' && prefix3 <= '659') return 'ORANGE';
   if (local.startsWith('69')) return 'ORANGE';
-  if (/^6[5678]/.test(local)) return 'MTN';
+  if (prefix3 >= '650' && prefix3 <= '654') return 'MTN';
+  if (local.startsWith('67') || local.startsWith('68')) return 'MTN';
+
   return null;
 }
 

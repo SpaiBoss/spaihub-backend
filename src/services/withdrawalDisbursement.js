@@ -1,6 +1,6 @@
 import prisma from '../utils/prisma.js';
 import * as campay from './campay.js';
-import { toCampayPhone } from '../utils/phone.js';
+import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_ATTEMPTS = 30;
@@ -14,6 +14,62 @@ function isAutoDisburseEnabled() {
 }
 
 export { isAutoDisburseEnabled };
+
+async function verifyRecipientMoMo(campayPhone) {
+  try {
+    const holder = await campay.getHolderInfo(campayPhone);
+    if (!holder?.full_name?.trim()) {
+      throw Object.assign(
+        new Error('This phone number is not registered for Mobile Money.'),
+        { statusCode: 400 }
+      );
+    }
+    return holder.full_name.trim();
+  } catch (err) {
+    if (err.statusCode === 400) throw err;
+
+    const status = err.response?.status;
+    const detail = String(err.response?.data?.detail || err.response?.data?.message || err.message || '');
+    if (status === 404 || /not found|invalid phone|unknown number/i.test(detail)) {
+      throw Object.assign(
+        new Error('This phone number is not registered for Mobile Money.'),
+        { statusCode: 400 }
+      );
+    }
+
+    // Holder lookup can be unavailable; proceed and let /api/withdraw/ return the real error.
+    return null;
+  }
+}
+
+async function assertCampayBalance(amountXaf, operator) {
+  try {
+    const balance = await campay.getBalance();
+    const total = Number(balance?.total_balance ?? 0);
+    const networkBalance =
+      operator === 'ORANGE'
+        ? Number(balance?.orange_balance ?? 0)
+        : Number(balance?.mtn_balance ?? 0);
+
+    if (total < amountXaf) {
+      throw Object.assign(
+        new Error('Campay wallet balance is too low to process this withdrawal. Contact support.'),
+        { statusCode: 503 }
+      );
+    }
+
+    if (networkBalance > 0 && networkBalance < amountXaf) {
+      const network = operator === 'ORANGE' ? 'Orange' : 'MTN';
+      throw Object.assign(
+        new Error(`Campay ${network} balance is too low for this withdrawal. Try again later or contact support.`),
+        { statusCode: 503 }
+      );
+    }
+  } catch (err) {
+    if (err.statusCode) throw err;
+    // Balance endpoint may fail if API withdrawal isn't enabled yet.
+  }
+}
 
 async function waitForCampaySuccess(reference) {
   for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
@@ -42,14 +98,30 @@ export async function disburseWithdrawal(withdrawal) {
     throw Object.assign(new Error('Invalid withdrawal phone number.'), { statusCode: 400 });
   }
 
+  const operator = detectCameroonOperator(withdrawal.phoneNumber);
+  if (!operator) {
+    throw Object.assign(
+      new Error('Use a valid MTN (67/68/650-654) or Orange (69/655-659) Mobile Money number.'),
+      { statusCode: 400 }
+    );
+  }
+
+  const amountXaf = Math.round(Number(withdrawal.amountXaf));
+  if (!Number.isFinite(amountXaf) || amountXaf < 1) {
+    throw Object.assign(new Error('Invalid withdrawal amount.'), { statusCode: 400 });
+  }
+
+  await verifyRecipientMoMo(campayPhone);
+  await assertCampayBalance(amountXaf, operator);
+
   let reference = withdrawal.campayReference;
   let immediateStatus = null;
 
   if (!reference) {
     const initiated = await campay.initiateWithdrawal({
-      amount: withdrawal.amountXaf,
+      amount: amountXaf,
       to: campayPhone,
-      description: `SpaiHub wallet withdrawal`,
+      description: 'SpaiHub wallet withdrawal',
       externalReference: withdrawal.id,
     });
     reference = initiated.reference;

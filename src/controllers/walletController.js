@@ -1,5 +1,9 @@
 import prisma from '../utils/prisma.js';
-import { normalizeCameroonMobileLocal, validateWithdrawalPhoneMethod } from '../utils/phone.js';
+import {
+  detectCameroonOperator,
+  normalizeCameroonMobileLocal,
+  paymentMethodForOperator,
+} from '../utils/phone.js';
 import { sendWithdrawalStatusEmail } from '../services/email.js';
 import {
   completeWithdrawalDisbursement,
@@ -46,14 +50,10 @@ export async function getWallet(req, res, next) {
 
 export async function requestWithdrawal(req, res, next) {
   try {
-    const { amountXaf, phoneNumber, method } = req.body;
+    const { amountXaf, phoneNumber, method: requestedMethod } = req.body;
 
     if (!amountXaf || amountXaf < MIN_WITHDRAWAL) {
       return res.status(400).json({ error: `Minimum withdrawal is ${MIN_WITHDRAWAL} XAF` });
-    }
-
-    if (!['MTN_MOMO', 'ORANGE_MONEY'].includes(method)) {
-      return res.status(400).json({ error: 'Payment method must be MTN_MOMO or ORANGE_MONEY' });
     }
 
     const localPhone = normalizeCameroonMobileLocal(phoneNumber);
@@ -61,9 +61,17 @@ export async function requestWithdrawal(req, res, next) {
       return res.status(400).json({ error: 'Enter a valid Cameroon mobile number (e.g. 677123456)' });
     }
 
-    const methodError = validateWithdrawalPhoneMethod(localPhone, method);
-    if (methodError) {
-      return res.status(400).json({ error: methodError });
+    const operator = detectCameroonOperator(localPhone);
+    const method = paymentMethodForOperator(operator);
+    if (!method) {
+      return res.status(400).json({
+        error: 'Use a valid MTN MoMo (67/68/650-654) or Orange Money (69/655-659) number.',
+      });
+    }
+
+    if (requestedMethod && requestedMethod !== method) {
+      const network = operator === 'MTN' ? 'MTN MoMo' : 'Orange Money';
+      return res.status(400).json({ error: `This number is ${network}. Use the matching Mobile Money network.` });
     }
 
     const withdrawal = await prisma.$transaction(async (tx) => {

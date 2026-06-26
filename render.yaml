@@ -24,7 +24,7 @@ services:
       - key: CAMPAY_PASSWORD
         sync: false
       - key: CAMPAY_BASE_URL
-        sync: false
+        value: https://campay.net
       - key: CAMPAY_PERMANENT_ACCESS_TOKEN
         sync: false
       - key: AUTO_DISBURSE_WITHDRAWALS

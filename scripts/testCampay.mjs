@@ -80,7 +80,7 @@ async function main() {
   console.error('');
   console.error('Tips:');
   console.error('- Demo keys → CAMPAY_BASE_URL=https://demo.campay.net');
-  console.error('- Live keys → CAMPAY_BASE_URL=https://campay.net');
+  console.error('- Live keys → CAMPAY_BASE_URL=https://www.campay.net');
   console.error('- Do not include /api in CAMPAY_BASE_URL');
   console.error('- Or set CAMPAY_PERMANENT_ACCESS_TOKEN from your Campay app dashboard');
   process.exit(1);

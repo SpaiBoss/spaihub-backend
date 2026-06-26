@@ -2,12 +2,14 @@ import axios from 'axios';
 import { detectCameroonOperator } from '../utils/phone.js';
 
 function defaultCampayBase() {
-  return process.env.NODE_ENV === 'production' ? 'https://campay.net' : 'https://demo.campay.net';
+  return process.env.NODE_ENV === 'production' ? 'https://www.campay.net' : 'https://demo.campay.net';
 }
 
 function normalizeCampayBase(url) {
   let base = (url || defaultCampayBase()).trim().replace(/\/$/, '');
   if (base.endsWith('/api')) base = base.slice(0, -4);
+  // Official Campay SDK uses www.campay.net for production
+  if (base === 'https://campay.net') base = 'https://www.campay.net';
   return base;
 }
 
@@ -92,6 +94,15 @@ async function campayPost(path, fields, token) {
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
   if (token) headers.Authorization = `Token ${token}`;
   return axios.post(`${CAMPAY_BASE}${path}`, formBody(fields), { headers });
+}
+
+async function campayPostJson(path, fields, token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Token ${token}`;
+  const body = Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined && value !== null)
+  );
+  return axios.post(`${CAMPAY_BASE}${path}`, body, { headers });
 }
 
 function wrapCampayError(err, context = {}) {
@@ -195,12 +206,41 @@ export async function getHolderInfo(phoneNumber) {
   return response.data;
 }
 
+export function normalizeCampayBalance(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { total: 0, mtn: 0, orange: 0, currency: 'XAF', usesTotalFallback: false, raw };
+  }
+
+  const total = Number(
+    raw.total_balance ?? raw.totalBalance ?? raw.balance ?? raw.money_balance ?? 0
+  );
+  let mtn = Number(raw.mtn_balance ?? raw.mtnBalance ?? 0);
+  let orange = Number(raw.orange_balance ?? raw.orangeBalance ?? 0);
+  let usesTotalFallback = false;
+
+  // Dashboard "money balance" is total_balance; operator splits are often 0 until Campay allocates them
+  if (total > 0 && mtn === 0 && orange === 0) {
+    mtn = total;
+    orange = total;
+    usesTotalFallback = true;
+  }
+
+  return {
+    total,
+    mtn,
+    orange,
+    currency: raw.currency || 'XAF',
+    usesTotalFallback,
+    raw,
+  };
+}
+
 export async function getBalance() {
   const token = await getAccessToken();
   const response = await axios.get(`${CAMPAY_BASE}/api/balance/`, {
     headers: { Authorization: `Token ${token}` },
   });
-  return response.data;
+  return normalizeCampayBalance(response.data);
 }
 
 function toCampayExternalReference(ref) {
@@ -210,19 +250,21 @@ function toCampayExternalReference(ref) {
 
 export async function initiateWithdrawal({ amount, currency = 'XAF', to, description, externalReference }) {
   const token = await getAccessToken();
+  const fields = {
+    amount: String(amount),
+    currency,
+    to,
+    description,
+    external_reference: toCampayExternalReference(externalReference) || '',
+  };
 
   try {
-    const response = await campayPost(
-      '/api/withdraw/',
-      {
-        amount: String(amount),
-        currency,
-        to,
-        description,
-        external_reference: toCampayExternalReference(externalReference),
-      },
-      token
-    );
+    let response;
+    try {
+      response = await campayPostJson('/api/withdraw/', fields, token);
+    } catch {
+      response = await campayPost('/api/withdraw/', fields, token);
+    }
 
     if (!response.data?.reference) {
       throw Object.assign(new Error('Withdrawal service did not return a transaction reference.'), {

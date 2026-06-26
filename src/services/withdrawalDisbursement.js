@@ -43,23 +43,17 @@ async function verifyRecipientMoMo(campayPhone) {
 }
 
 function campayBalanceDiagnosis(balance, operator, amountXaf) {
-  const total = Number(balance?.total_balance ?? 0);
-  const mtn = Number(balance?.mtn_balance ?? 0);
-  const orange = Number(balance?.orange_balance ?? 0);
+  const normalized = balance?.total !== undefined ? balance : campay.normalizeCampayBalance(balance);
   const network = operator === 'ORANGE' ? 'Orange' : 'MTN';
-  const networkBalance = operator === 'ORANGE' ? orange : mtn;
+  const networkBalance = operator === 'ORANGE' ? normalized.orange : normalized.mtn;
 
   if (networkBalance >= amountXaf) return null;
 
-  if (total >= amountXaf && networkBalance < amountXaf) {
-    return `Campay has ${total.toLocaleString()} XAF total but ${network} payout balance is ${networkBalance.toLocaleString()} XAF. In campay.net, move or deposit funds into your ${network} API wallet before sending MoMo payouts.`;
+  if (normalized.total === 0) {
+    return 'Campay API shows 0 balance. Confirm Render uses API keys from your hotspot-sale app on campay.net and CAMPAY_BASE_URL=https://www.campay.net.';
   }
 
-  if (total === 0 && mtn === 0 && orange === 0) {
-    return 'Campay API shows 0 balance. Use API keys from the same Campay application that holds your funds, or top up that application wallet on campay.net.';
-  }
-
-  return `Campay ${network} balance (${networkBalance.toLocaleString()} XAF) is too low for a ${amountXaf.toLocaleString()} XAF payout.`;
+  return `Campay balance (${normalized.total.toLocaleString()} XAF) is too low for a ${amountXaf.toLocaleString()} XAF payout.`;
 }
 
 async function assertCampayBalance(amountXaf, operator) {

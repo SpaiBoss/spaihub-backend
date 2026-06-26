@@ -475,10 +475,11 @@ export async function verifyWithdrawalCampay(req, res, next) {
       holderError,
       balance: balance
         ? {
-            total: Number(balance.total_balance ?? 0),
-            mtn: Number(balance.mtn_balance ?? 0),
-            orange: Number(balance.orange_balance ?? 0),
+            total: balance.total,
+            mtn: balance.mtn,
+            orange: balance.orange,
             currency: balance.currency || 'XAF',
+            usesTotalFallback: balance.usesTotalFallback,
           }
         : null,
       balanceDiagnosis: balance

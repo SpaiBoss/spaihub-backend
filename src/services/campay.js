@@ -32,6 +32,12 @@ function campayErrorMessage(err) {
       if (/unable to log in with provided credentials/i.test(message)) {
         return 'Campay API credentials are invalid. In Render, set CAMPAY_USERNAME and CAMPAY_PASSWORD to your application keys from campay.net (not your login email). Demo keys need CAMPAY_BASE_URL=https://demo.campay.net; live keys need https://campay.net.';
       }
+      if (/unauthorized mtn number/i.test(message)) {
+        return 'This MTN number is not authorized on Campay. On demo, add the number under your Campay app settings (Authorized numbers). On live, use an active MTN MoMo number that matches the selected network.';
+      }
+      if (/unauthorized orange/i.test(message)) {
+        return 'This Orange number is not authorized on Campay. On demo, add the number under your Campay app settings (Authorized numbers). On live, use an active Orange Money number.';
+      }
       return message;
     }
     const fieldErrors = Object.entries(data)

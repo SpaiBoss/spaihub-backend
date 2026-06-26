@@ -1,5 +1,5 @@
 import prisma from '../utils/prisma.js';
-import { normalizeCameroonMobileLocal } from '../utils/phone.js';
+import { normalizeCameroonMobileLocal, validateWithdrawalPhoneMethod } from '../utils/phone.js';
 import { sendWithdrawalStatusEmail } from '../services/email.js';
 import {
   completeWithdrawalDisbursement,
@@ -59,6 +59,11 @@ export async function requestWithdrawal(req, res, next) {
     const localPhone = normalizeCameroonMobileLocal(phoneNumber);
     if (!localPhone) {
       return res.status(400).json({ error: 'Enter a valid Cameroon mobile number (e.g. 677123456)' });
+    }
+
+    const methodError = validateWithdrawalPhoneMethod(localPhone, method);
+    if (methodError) {
+      return res.status(400).json({ error: methodError });
     }
 
     const withdrawal = await prisma.$transaction(async (tx) => {

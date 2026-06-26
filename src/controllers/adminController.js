@@ -315,6 +315,11 @@ export async function getWithdrawals(req, res, next) {
         include,
         orderBy: { createdAt: 'desc' },
       });
+      withdrawals.sort((a, b) => {
+        if (a.adminNote && !b.adminNote) return -1;
+        if (!a.adminNote && b.adminNote) return 1;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
       return res.json({
         withdrawals,
         pagination: {

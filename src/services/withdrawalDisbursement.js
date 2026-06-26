@@ -154,7 +154,18 @@ export async function completeWithdrawalDisbursement(withdrawalId) {
     data: {
       status: 'APPROVED',
       campayReference: result.reference,
+      adminNote: null,
       processedAt: new Date(),
+    },
+  });
+}
+
+export async function holdWithdrawalForAdminRetry(withdrawalId, reason, { clearCampayReference = false } = {}) {
+  await prisma.withdrawal.update({
+    where: { id: withdrawalId },
+    data: {
+      adminNote: reason,
+      ...(clearCampayReference ? { campayReference: null } : {}),
     },
   });
 }

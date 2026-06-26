@@ -7,7 +7,7 @@ import {
 import { sendWithdrawalStatusEmail } from '../services/email.js';
 import {
   completeWithdrawalDisbursement,
-  failWithdrawalAndRefund,
+  holdWithdrawalForAdminRetry,
   isAutoDisburseEnabled,
 } from '../services/withdrawalDisbursement.js';
 
@@ -117,12 +117,16 @@ export async function requestWithdrawal(req, res, next) {
       return res.status(201).json(completed);
     } catch (err) {
       const message = err.message || 'Mobile Money transfer failed';
-      await failWithdrawalAndRefund(withdrawal, message);
+      const clearCampayReference = err.statusCode === 400 || err.statusCode === 502;
+      await holdWithdrawalForAdminRetry(withdrawal.id, message, { clearCampayReference });
 
-      if (err.statusCode) {
-        return res.status(err.statusCode).json({ error: message });
-      }
-      return res.status(502).json({ error: message });
+      return res.status(202).json({
+        status: 'PENDING',
+        pendingAdminRetry: true,
+        message: 'Withdrawal is queued. An admin will complete the MoMo transfer shortly.',
+        error: message,
+        withdrawal: { id: withdrawal.id, amountXaf: withdrawal.amountXaf, status: 'PENDING' },
+      });
     }
   } catch (err) {
     if (err.statusCode) {

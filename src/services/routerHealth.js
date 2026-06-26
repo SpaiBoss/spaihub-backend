@@ -35,7 +35,6 @@ export async function runRouterHealthJob() {
       status: 'SUCCESS',
       sessionEnd: { gt: kickWindowStart, lte: now },
       hotspotUsername: { not: null },
-      routerId: { not: null },
     },
     select: { id: true, routerId: true, hotspotUsername: true },
   });

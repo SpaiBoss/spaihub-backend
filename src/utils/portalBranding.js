@@ -21,7 +21,7 @@ export function resolveStoredLogoUrl(stored, req) {
   const trimmed = stored.trim();
 
   const apiBase = getPublicApiBase(req);
-  const embeddedLogo = trimmed.match(/logos\/([0-9a-f-]{36}\.(?:png|jpe?g|webp))(?:\?.*)?$/i);
+  const embeddedLogo = trimmed.match(/logos\/([0-9a-f-]{36}(?:-\d+)?\.(?:png|jpe?g|webp))(?:\?.*)?$/i);
   if (embeddedLogo) {
     return `${apiBase}/media/logos/${embeddedLogo[1]}`;
   }

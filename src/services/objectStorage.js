@@ -1,7 +1,14 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL_LOGOS_DIR = path.join(__dirname, '../../uploads/logos');
@@ -13,7 +20,9 @@ const CONTENT_TYPES = {
   webp: 'image/webp',
 };
 
-const SAFE_LOGO_FILE = /^[0-9a-f-]{36}\.(png|jpe?g|webp)$/i;
+// {ownerId}.png or {ownerId}-{timestamp}.png
+export const LOGO_FILENAME_RE = /^[0-9a-f-]{36}(?:-\d+)?\.(png|jpe?g|webp)$/i;
+export const LOGO_KEY_RE = /^logos\/[0-9a-f-]{36}(?:-\d+)?\.(png|jpe?g|webp)$/i;
 
 let s3Client = null;
 
@@ -45,33 +54,38 @@ function getS3Client() {
   return s3Client;
 }
 
-function logoObjectKey(ownerId, ext) {
-  return `logos/${ownerId}.${ext}`;
-}
-
 function contentTypeForExt(ext) {
   return CONTENT_TYPES[ext.toLowerCase()] || 'application/octet-stream';
 }
 
+function logoObjectKey(ownerId, ext) {
+  return `logos/${ownerId}-${Date.now()}.${ext}`;
+}
+
+function ownerLogoPrefix(ownerId) {
+  return `logos/${ownerId}`;
+}
+
 function storedKeyFromLogoUrl(logoUrl) {
   if (!logoUrl) return null;
-  if (logoUrl.startsWith('logos/')) return logoUrl;
+  if (LOGO_KEY_RE.test(logoUrl)) return logoUrl;
 
   if (logoUrl.startsWith('/uploads/logos/')) {
     return `logos/${path.basename(logoUrl)}`;
   }
 
-  const mediaMatch = logoUrl.match(/\/media\/(logos\/[0-9a-f-]{36}\.(?:png|jpe?g|webp))$/i);
+  const mediaMatch = logoUrl.match(/\/media\/(logos\/[0-9a-f-]{36}(?:-\d+)?\.(?:png|jpe?g|webp))(?:\?.*)?$/i);
   if (mediaMatch) return mediaMatch[1];
 
   const publicBase = process.env.R2_PUBLIC_URL?.trim().replace(/\/+$/, '');
   if (publicBase && logoUrl.startsWith(`${publicBase}/`)) {
-    return logoUrl.slice(publicBase.length + 1);
+    const key = logoUrl.slice(publicBase.length + 1).split('?')[0];
+    if (LOGO_KEY_RE.test(key)) return key;
   }
 
   try {
     const parsed = new URL(logoUrl);
-    const match = parsed.pathname.match(/\/(logos\/[0-9a-f-]{36}\.(?:png|jpe?g|webp))$/i);
+    const match = parsed.pathname.match(/\/(logos\/[0-9a-f-]{36}(?:-\d+)?\.(?:png|jpe?g|webp))$/i);
     if (match) return match[1];
   } catch {
     return null;
@@ -104,7 +118,7 @@ async function readLogoLocally(filename) {
 }
 
 export function isSafeLogoFilename(filename) {
-  return SAFE_LOGO_FILE.test(filename);
+  return LOGO_FILENAME_RE.test(filename);
 }
 
 export async function readOwnerLogoFile(filename) {
@@ -135,7 +149,43 @@ export async function readOwnerLogo(storedLogoUrl) {
   }
 }
 
+async function deleteAllOwnerLogosFromR2(ownerId) {
+  const bucket = process.env.R2_BUCKET.trim();
+  const prefix = ownerLogoPrefix(ownerId);
+  const listed = await getS3Client().send(
+    new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix })
+  );
+  const keys = (listed.Contents || []).map((item) => item.Key).filter(Boolean);
+  if (keys.length === 0) return;
+
+  await getS3Client().send(
+    new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: { Objects: keys.map((Key) => ({ Key })) },
+    })
+  );
+}
+
+async function deleteAllOwnerLogosLocally(ownerId) {
+  const files = await fs.readdir(LOCAL_LOGOS_DIR).catch(() => []);
+  const prefix = `${ownerId}`;
+  await Promise.all(
+    files
+      .filter((name) => name.startsWith(prefix) && LOGO_FILENAME_RE.test(name))
+      .map((name) => fs.unlink(path.join(LOCAL_LOGOS_DIR, name)).catch(() => {}))
+  );
+}
+
+export async function deleteAllOwnerLogos(ownerId) {
+  if (isR2Configured()) {
+    await deleteAllOwnerLogosFromR2(ownerId).catch(() => {});
+    return;
+  }
+  await deleteAllOwnerLogosLocally(ownerId);
+}
+
 async function uploadLogoToR2(ownerId, buffer, ext) {
+  await deleteAllOwnerLogosFromR2(ownerId);
   const key = logoObjectKey(ownerId, ext);
   await getS3Client().send(
     new PutObjectCommand({
@@ -143,15 +193,16 @@ async function uploadLogoToR2(ownerId, buffer, ext) {
       Key: key,
       Body: buffer,
       ContentType: contentTypeForExt(ext),
-      CacheControl: 'public, max-age=31536000, immutable',
+      CacheControl: 'public, max-age=3600',
     })
   );
   return key;
 }
 
 async function uploadLogoLocally(ownerId, buffer, ext) {
+  await deleteAllOwnerLogosLocally(ownerId);
   await fs.mkdir(LOCAL_LOGOS_DIR, { recursive: true });
-  const filename = `${ownerId}.${ext}`;
+  const filename = `${ownerId}-${Date.now()}.${ext}`;
   await fs.writeFile(path.join(LOCAL_LOGOS_DIR, filename), buffer);
   return `/uploads/logos/${filename}`;
 }
@@ -172,12 +223,6 @@ async function deleteLogoFromR2(key) {
   );
 }
 
-async function deleteLogoLocally(logoUrl) {
-  if (!logoUrl?.startsWith('/uploads/logos/')) return;
-  const filepath = path.join(LOCAL_LOGOS_DIR, path.basename(logoUrl));
-  await fs.unlink(filepath).catch(() => {});
-}
-
 export async function deleteOwnerLogo(logoUrl) {
   if (!logoUrl) return;
 
@@ -187,7 +232,10 @@ export async function deleteOwnerLogo(logoUrl) {
     return;
   }
 
-  await deleteLogoLocally(logoUrl);
+  if (logoUrl.startsWith('/uploads/logos/')) {
+    const filepath = path.join(LOCAL_LOGOS_DIR, path.basename(logoUrl));
+    await fs.unlink(filepath).catch(() => {});
+  }
 }
 
 export function getStorageMode() {

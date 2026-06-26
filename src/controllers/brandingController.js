@@ -1,6 +1,6 @@
 import prisma from '../utils/prisma.js';
 import { parseBrandingInput, resolvePortalBranding } from '../utils/portalBranding.js';
-import { deleteOwnerLogo, getStorageMode, uploadOwnerLogo } from '../services/objectStorage.js';
+import { deleteAllOwnerLogos, getStorageMode, uploadOwnerLogo } from '../services/objectStorage.js';
 
 const MAX_LOGO_BYTES = 512 * 1024;
 const ALLOWED_MIME = {
@@ -83,14 +83,6 @@ export async function uploadBrandingLogo(req, res, next) {
       return res.status(400).json({ error: 'Logo must be 512 KB or smaller' });
     }
 
-    const existing = await prisma.owner.findUnique({
-      where: { id: req.owner.id },
-      select: { portalLogoUrl: true },
-    });
-    if (existing?.portalLogoUrl) {
-      await deleteOwnerLogo(existing.portalLogoUrl);
-    }
-
     const portalLogoUrl = await uploadOwnerLogo(req.owner.id, buffer, ext);
     const owner = await prisma.owner.update({
       where: { id: req.owner.id },
@@ -121,7 +113,7 @@ export async function removeBrandingLogo(req, res, next) {
   try {
     const owner = await prisma.owner.findUnique({ where: { id: req.owner.id } });
     if (owner?.portalLogoUrl) {
-      await deleteOwnerLogo(owner.portalLogoUrl);
+      await deleteAllOwnerLogos(req.owner.id);
     }
 
     const updated = await prisma.owner.update({

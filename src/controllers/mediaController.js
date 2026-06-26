@@ -9,7 +9,7 @@ export async function serveOwnerLogo(req, res, next) {
 
     const { buffer, contentType } = await readOwnerLogoFile(filename);
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.send(buffer);
   } catch (err) {

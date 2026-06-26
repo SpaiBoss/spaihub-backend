@@ -484,9 +484,11 @@ export async function verifyWithdrawalCampay(req, res, next) {
     }
 
     let balance = null;
+    let rawBalance = null;
     let balanceError = null;
     try {
-      balance = await campay.getBalance();
+      rawBalance = await campay.getBalanceRaw();
+      balance = campay.normalizeCampayBalance(rawBalance);
     } catch (err) {
       balanceError = err.message;
     }
@@ -496,6 +498,9 @@ export async function verifyWithdrawalCampay(req, res, next) {
       operator,
       holderName: holder?.full_name || null,
       holderError,
+      isDemo: campay.isCampayDemo(),
+      isProduction: campay.isCampayProduction(),
+      usesPermanentToken: Boolean(process.env.CAMPAY_PERMANENT_ACCESS_TOKEN?.trim()),
       balance: balance
         ? {
             total: balance.total,
@@ -509,6 +514,7 @@ export async function verifyWithdrawalCampay(req, res, next) {
         ? campayBalanceDiagnosis(balance, operator, withdrawal.amountXaf)
         : null,
       balanceError,
+      rawBalance,
       campayBaseUrl: campay.getCampayBaseUrl(),
       apiWithdrawalHint:
         'If Send MoMo fails with Unauthorized MTN number: enable API withdrawal in app Settings on campay.net, or pay via Campay dashboard Withdraw then Mark paid manually here.',

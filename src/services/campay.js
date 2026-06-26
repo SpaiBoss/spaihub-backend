@@ -19,6 +19,10 @@ export function getCampayBaseUrl() {
   return CAMPAY_BASE;
 }
 
+export function isCampayDemo() {
+  return CAMPAY_BASE.includes('demo.campay');
+}
+
 export function isCampayProduction() {
   return CAMPAY_BASE.includes('campay.net') && !CAMPAY_BASE.includes('demo.');
 }
@@ -51,15 +55,14 @@ function campayErrorMessage(err, context = {}) {
         return 'Campay API credentials are invalid. In Render, set CAMPAY_USERNAME and CAMPAY_PASSWORD to your application keys from campay.net (not your login email). Demo keys need CAMPAY_BASE_URL=https://demo.campay.net; live keys need https://campay.net.';
       }
       if (/unauthorized mtn number/i.test(message)) {
+        if (isCampayDemo()) {
+          return `Campay demo rejected ${context.phone || 'this number'}. Add it under hotspot-sale → Settings → Authorized numbers (demo only).`;
+        }
         if (isCampayProduction()) {
           const phone = context.phone || '';
-          const operator = phone ? detectCameroonOperator(phone) : null;
-          if (operator === 'MTN') {
-            return `Campay blocked API payout to ${phone} ("Unauthorized MTN number"). The MoMo number is valid. Fix: open hotspot-sale on campay.net → Settings → enable API withdrawal. If already on, Campay must activate MTN API disbursements on your account — WhatsApp +237652007684. Until then, use Campay dashboard Withdraw to send MoMo, then click Mark paid manually in SpaiHub admin.`;
-          }
-          return `Campay rejected this MTN payout (${phone || 'number'}). Use an active MTN MoMo line (67/68/650-654). (Campay: ${message})`;
+          return `Campay blocked API payout to ${phone}. API withdrawal is on but Campay still rejected the transfer — contact Campay WhatsApp +237652007684 and ask them to enable MTN API disbursements for hotspot-sale. Until fixed: use Campay dashboard Withdraw, then Mark paid manually in SpaiHub.`;
         }
-        return 'This MTN number is not authorized on Campay demo. Add it under your Campay app → Authorized numbers.';
+        return 'This MTN number is not authorized on Campay. Check CAMPAY_BASE_URL and API keys.';
       }
       if (/unauthorized orange/i.test(message)) {
         return isCampayProduction()
@@ -239,12 +242,16 @@ export function normalizeCampayBalance(raw) {
   };
 }
 
-export async function getBalance() {
+export async function getBalanceRaw() {
   const token = await getAccessToken();
   const response = await axios.get(`${CAMPAY_BASE}/api/balance/`, {
     headers: { Authorization: `Token ${token}` },
   });
-  return normalizeCampayBalance(response.data);
+  return response.data;
+}
+
+export async function getBalance() {
+  return normalizeCampayBalance(await getBalanceRaw());
 }
 
 function toCampayExternalReference(ref) {
@@ -254,32 +261,18 @@ function toCampayExternalReference(ref) {
 
 export async function initiateWithdrawal({ amount, currency = 'XAF', to, description, externalReference }) {
   const token = await getAccessToken();
+  const extRef = toCampayExternalReference(externalReference) || '';
+  // Match official Campay Python SDK: all string fields, external_reference always sent
   const fields = {
-    amount: Number(amount),
-    currency,
-    to,
-    description,
+    amount: String(amount),
+    currency: String(currency),
+    to: String(to),
+    description: String(description),
+    external_reference: extRef,
   };
-  const extRef = toCampayExternalReference(externalReference);
-  if (extRef) fields.external_reference = extRef;
 
   try {
-    let response;
-    try {
-      response = await campayPostJson('/api/withdraw/', fields, token);
-    } catch {
-      response = await campayPost(
-        '/api/withdraw/',
-        {
-          amount: String(amount),
-          currency,
-          to,
-          description,
-          ...(extRef ? { external_reference: extRef } : {}),
-        },
-        token
-      );
-    }
+    const response = await campayPostJson('/api/withdraw/', fields, token);
 
     if (!response.data?.reference) {
       throw Object.assign(new Error('Withdrawal service did not return a transaction reference.'), {

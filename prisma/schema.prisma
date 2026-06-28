@@ -54,6 +54,11 @@ enum RouterCommandType {
   KICK_USER
 }
 
+enum DeploymentType {
+  PHYSICAL
+  CHR
+}
+
 model Owner {
   id                 String      @id @default(uuid())
   name               String
@@ -99,16 +104,19 @@ model Location {
 }
 
 model Router {
-  id          String       @id @default(uuid())
-  locationId  String
-  name        String
-  routerToken String       @unique
-  status      RouterStatus @default(OFFLINE)
-  lastSeenAt  DateTime?
-  mikrotikIp  String?
-  isActive    Boolean      @default(true)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id                    String         @id @default(uuid())
+  locationId            String
+  name                  String
+  routerToken           String         @unique
+  status                RouterStatus   @default(OFFLINE)
+  lastSeenAt            DateTime?
+  mikrotikIp            String?
+  deploymentType        DeploymentType @default(PHYSICAL)
+  chrConfig             Json?
+  onboardingCompletedAt DateTime?
+  isActive              Boolean        @default(true)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
   location     Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
   transactions Transaction[]

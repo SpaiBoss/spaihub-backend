@@ -8,8 +8,10 @@ import {
 import {
   getRouters,
   addRouter,
+  updateRouter,
   deleteRouter,
   getRouterSetupScript,
+  getRouterOnboardingStatus,
 } from '../controllers/routerController.js';
 import {
   getPackages,
@@ -63,7 +65,9 @@ router.patch('/locations/:id', updateLocation);
 
 router.get('/locations/:locationId/routers', getRouters);
 router.post('/locations/:locationId/routers', addRouter);
+router.patch('/locations/:locationId/routers/:routerId', updateRouter);
 router.get('/locations/:locationId/routers/:routerId/setup', getRouterSetupScript);
+router.get('/locations/:locationId/routers/:routerId/onboarding-status', getRouterOnboardingStatus);
 router.delete('/locations/:locationId/routers/:routerId', deleteRouter);
 
 router.get('/locations/:locationId/packages', getPackages);

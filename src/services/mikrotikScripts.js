@@ -1,4 +1,5 @@
 import { escapeRouterOsString } from '../utils/hotspotCredentials.js';
+import { DEFAULT_CHR_CONFIG } from '../utils/chrConfig.js';
 
 const API_BASE = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 4000}`;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -141,11 +142,89 @@ function buildAntiTetheringLines(enableAntiTethering) {
   ].join('\n');
 }
 
-export function buildHotspotSetupScript(routerToken, location = {}) {
+function resolveHotspotProfileTarget(chrConfig) {
+  if (chrConfig?.hotspotName) {
+    return `[find name="${escapeRouterOsString(chrConfig.hotspotName)}"]`;
+  }
+  return '[find default=yes]';
+}
+
+export function buildChrBootstrapScript(chrConfig = DEFAULT_CHR_CONFIG) {
+  const cfg = { ...DEFAULT_CHR_CONFIG, ...chrConfig };
+  const bridge = escapeRouterOsString(cfg.bridgeName);
+  const wan = escapeRouterOsString(cfg.wanInterface);
+  const lan = escapeRouterOsString(cfg.lanInterface);
+  const hotspot = escapeRouterOsString(cfg.hotspotName);
+  const gateway = escapeRouterOsString(cfg.gatewayIp);
+  const network = escapeRouterOsString(cfg.localNetwork);
+  const pool = escapeRouterOsString(cfg.dhcpPool);
+  const poolName = 'spaihub-dhcp';
+
+  return `# SpaiHub CHR bootstrap (run first on a fresh MikroTik CHR)
+# Verify interface names with /interface print before running.
+# WAN: ${cfg.wanInterface}  LAN: ${cfg.lanInterface}  Bridge: ${cfg.bridgeName}
+
+:local bridgeName "${bridge}"
+:local wanIf "${wan}"
+:local lanIf "${lan}"
+:local hsName "${hotspot}"
+:local gw "${gateway}"
+
+# Bridge for hotspot LAN
+:if ([:len [/interface bridge find name=$bridgeName]] = 0) do={
+  /interface bridge add name=$bridgeName comment=spaihub-chr
+}
+:if ($lanIf != $wanIf) do={
+  :if ([:len [/interface bridge port find interface=$lanIf]] = 0) do={
+    /interface bridge port add bridge=$bridgeName interface=$lanIf
+  }
+} else={
+  # Single-NIC CHR: add WAN interface to bridge (adjust if your layout differs)
+  :if ([:len [/interface bridge port find interface=$wanIf]] = 0) do={
+    /interface bridge port add bridge=$bridgeName interface=$wanIf
+  }
+}
+
+# Gateway IP on bridge
+:if ([:len [/ip address find interface=$bridgeName address~"${gateway}/"]] = 0) do={
+  /ip address add address=${gateway}/24 interface=$bridgeName comment=spaihub-chr
+}
+
+# DHCP pool and server
+/ip pool remove [find name="${poolName}"]
+/ip pool add name=${poolName} ranges=${pool}
+/ip dhcp-server network remove [find address="${network}"]
+/ip dhcp-server network add address=${network} gateway=$gw dns-server=$gw comment=spaihub-chr
+/ip dhcp-server remove [find name="${poolName}"]
+/ip dhcp-server add name=${poolName} interface=$bridgeName address-pool=${poolName} disabled=no
+
+# Hotspot server on bridge
+/ip hotspot remove [find name=$hsName]
+/ip hotspot add name=$hsName interface=$bridgeName address-pool=${poolName} profile=default disabled=no
+
+# NAT for WAN
+/ip firewall nat remove [find comment=spaihub-chr-nat]
+/ip firewall nat add chain=srcnat out-interface=$wanIf action=masquerade comment=spaihub-chr-nat
+
+# DNS for clients
+/ip dns set allow-remote-requests=yes servers=8.8.8.8,1.1.1.1
+
+# Allow established connections
+/ip firewall filter remove [find comment=spaihub-chr-forward]
+:if ([:len [/ip firewall filter find comment=spaihub-chr-forward]] = 0) do={
+  /ip firewall filter add chain=forward action=accept connection-state=established,related comment=spaihub-chr-forward
+}`;
+}
+
+export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = null) {
   const portalUrl = buildPortalUrl(routerToken);
   const frontendHost = new URL(FRONTEND_URL).host;
   const apiHost = new URL(API_BASE).host;
   const enableAntiTethering = !location.allowHotspotSharing;
+  const profileTarget = resolveHotspotProfileTarget(chrConfig);
+  const hotspotTarget = chrConfig?.hotspotName
+    ? `[find name="${escapeRouterOsString(chrConfig.hotspotName)}"]`
+    : '[find]';
 
   return `# SpaiHub hotspot setup (run once on your MikroTik)
 # Adjust interface names and hotspot profile if yours differ from "hotspot1" / default profile.
@@ -160,19 +239,44 @@ ${buildProfileSetupLines()}
 ${buildAntiTetheringLines(enableAntiTethering)}
 
 # Send unauthenticated users to the SpaiHub captive portal
-/ip hotspot profile set [find default=yes] login-by=http-chap,http-pap,https html-directory=hotspot login-url="${portalUrl}"
+/ip hotspot profile set ${profileTarget} login-by=http-chap,http-pap,https html-directory=hotspot login-url="${portalUrl}"
+/ip hotspot set ${hotspotTarget} disabled=no
 
 # Optional: test redirect locally by opening this URL in a browser:
 # ${buildPreviewPortalUrl(routerToken)}`;
 }
 
-export function buildRouterSetup(routerToken, location = {}) {
-  const hotspotSetupScript = buildHotspotSetupScript(routerToken, location);
+export function buildRouterSetup(routerToken, location = {}, options = {}) {
+  const { deploymentType = 'PHYSICAL', chrConfig = null } = options;
+  const effectiveChrConfig = deploymentType === 'CHR' ? { ...DEFAULT_CHR_CONFIG, ...chrConfig } : null;
+  const hotspotSetupScript = buildHotspotSetupScript(
+    routerToken,
+    location,
+    effectiveChrConfig
+  );
+  const connectionScript = buildConnectionScript(routerToken);
+  const chrBootstrapScript =
+    deploymentType === 'CHR' ? buildChrBootstrapScript(effectiveChrConfig) : null;
+
+  const scriptOrder =
+    deploymentType === 'CHR'
+      ? ['chrBootstrap', 'hotspot', 'connection']
+      : ['hotspot', 'connection'];
+
+  const parts = [hotspotSetupScript, connectionScript];
+  if (chrBootstrapScript) {
+    parts.unshift(chrBootstrapScript);
+  }
+
   return {
+    deploymentType,
+    chrConfig: effectiveChrConfig,
+    chrBootstrapScript,
+    hotspotSetupScript,
+    connectionScript,
     portalUrl: buildPortalUrl(routerToken),
     previewPortalUrl: buildPreviewPortalUrl(routerToken),
-    connectionScript: buildConnectionScript(routerToken),
-    hotspotSetupScript,
-    mikrotikScript: `${hotspotSetupScript}\n\n${buildConnectionScript(routerToken)}`,
+    scriptOrder,
+    mikrotikScript: parts.join('\n\n'),
   };
 }

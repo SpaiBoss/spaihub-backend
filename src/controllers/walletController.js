@@ -11,7 +11,7 @@ import {
   isAutoDisburseEnabled,
 } from '../services/withdrawalDisbursement.js';
 
-const MIN_WITHDRAWAL = 1000;
+const MIN_WITHDRAWAL = 100;
 
 export async function getWallet(req, res, next) {
   try {

@@ -12,10 +12,10 @@ const PAGE_W = 595.28;
 const PAGE_H = 841.89;
 const MARGIN = 36;
 
-const NAVY = '#1A3C5E';
-const BRAND = '#5463FF';
-const MUTED = '#64748b';
-const LIGHT = '#f1f5f9';
+const NAVY = '#0E141B';
+const BRAND = '#0F766E';
+const MUTED = '#6B7280';
+const LIGHT = '#F3F4F6';
 
 export const PDF_LAYOUTS = {
   2: { cols: 1, rows: 2, label: '2 per page (large)' },

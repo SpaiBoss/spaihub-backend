@@ -44,7 +44,7 @@ export async function sendVerificationEmail(email, token) {
       'Verify your email',
       `<p>Welcome to SpaiHub! Please verify your email address to activate your account.</p>
        <p style="text-align: center; margin: 32px 0;">
-         <a href="${verifyUrl}" style="background: #5463FF; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Verify Email</a>
+         <a href="${verifyUrl}" style="background: #0F766E; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Verify Email</a>
        </p>
        <p style="color: #64748b; font-size: 14px;">If the button doesn't work, copy this link: ${verifyUrl}</p>`
     ),
@@ -62,7 +62,7 @@ export async function sendPasswordResetEmail(email, token) {
       'Reset your password',
       `<p>We received a request to reset your password. Click the button below to choose a new password. This link expires in 1 hour.</p>
        <p style="text-align: center; margin: 32px 0;">
-         <a href="${resetUrl}" style="background: #5463FF; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Reset Password</a>
+         <a href="${resetUrl}" style="background: #0F766E; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Reset Password</a>
        </p>
        <p style="color: #64748b; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>`
     ),

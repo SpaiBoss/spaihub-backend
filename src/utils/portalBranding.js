@@ -72,7 +72,7 @@ export function parseBrandingInput(body) {
   if (body.portalAccentColor !== undefined) {
     const value = String(body.portalAccentColor).trim();
     if (value && !isValidAccentColor(value)) {
-      return { error: 'Accent color must be a valid hex code (e.g. #5463FF)' };
+      return { error: 'Accent color must be a valid hex code (e.g. #0F766E)' };
     }
     data.portalAccentColor = value || null;
   }

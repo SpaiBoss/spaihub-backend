@@ -137,7 +137,7 @@ function buildAntiTetheringLines(enableAntiTethering) {
     '# Block tethered traffic (TTL=63 indicates one hop consumed inside phone hotspot)',
     '/ip firewall mangle remove [find comment~"spaihub-anti-tether"]',
     '/ip firewall filter remove [find comment~"spaihub-anti-tether"]',
-    '/ip firewall mangle add chain=forward action=mark-packet new-packet-mark=spaihub-tether passthrough=no ttl=63 comment=spaihub-anti-tether',
+    '/ip firewall mangle add chain=forward action=mark-packet new-packet-mark=spaihub-tether passthrough=no ttl=equal:63 comment=spaihub-anti-tether',
     '/ip firewall filter add chain=forward action=drop packet-mark=spaihub-tether comment=spaihub-anti-tether',
   ].join('\n');
 }

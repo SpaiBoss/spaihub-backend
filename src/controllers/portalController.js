@@ -3,6 +3,7 @@ import * as campay from '../services/campay.js';
 import * as mikrotik from '../services/mikrotik.js';
 import { completePaidSession } from '../services/session.js';
 import { findActiveSession, sessionResponse } from '../services/portalSession.js';
+import { buildMikrotikLoginHtml } from '../services/mikrotikScripts.js';
 import { isValidDeviceId, normalizeMac } from '../utils/deviceId.js';
 import { normalizeCameroonMobileLocal, toCampayPhone } from '../utils/phone.js';
 import {
@@ -92,6 +93,24 @@ export async function getPortal(req, res, next) {
       packages,
       branding,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** HTML redirect page for MikroTik hotspot/login.html (fetched by setup script). */
+export async function getMikrotikLoginHtml(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const router = await loadPortalRouter(routerToken);
+    const accessError = portalAccessError(router);
+    if (accessError) {
+      return res.status(accessError.status).type('text/plain').send(accessError.error);
+    }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buildMikrotikLoginHtml(routerToken));
   } catch (err) {
     next(err);
   }

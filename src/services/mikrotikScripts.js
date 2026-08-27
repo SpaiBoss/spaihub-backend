@@ -142,11 +142,27 @@ function buildAntiTetheringLines(enableAntiTethering) {
   ].join('\n');
 }
 
-function resolveHotspotProfileTarget(chrConfig) {
-  if (chrConfig?.hotspotName) {
-    return `[find name="${escapeRouterOsString(chrConfig.hotspotName)}"]`;
-  }
-  return '[find default=yes]';
+/** Captive-portal redirect page for MikroTik html-directory (RouterOS has no login-url property). */
+export function buildMikrotikLoginHtml(routerToken) {
+  const portalUrl = buildPortalUrl(routerToken);
+  return `<html>
+<head>
+<meta http-equiv="refresh" content="0; url=${portalUrl}">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="-1">
+<script>
+  window.location.href="${portalUrl}";
+</script>
+</head>
+<body>
+  <a href="${portalUrl}">Continue to SpaiHub</a>
+</body>
+</html>
+`;
+}
+
+export function buildMikrotikLoginHtmlUrl(routerToken) {
+  return `${API_BASE.replace(/\/$/, '')}/portal/${routerToken}/mikrotik-login.html`;
 }
 
 export function buildChrBootstrapScript(chrConfig = DEFAULT_CHR_CONFIG) {
@@ -217,17 +233,18 @@ export function buildChrBootstrapScript(chrConfig = DEFAULT_CHR_CONFIG) {
 }
 
 export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = null) {
-  const portalUrl = buildPortalUrl(routerToken);
   const frontendHost = new URL(FRONTEND_URL).host;
   const apiHost = new URL(API_BASE).host;
   const enableAntiTethering = !location.allowHotspotSharing;
-  const profileTarget = resolveHotspotProfileTarget(chrConfig);
   const hotspotTarget = chrConfig?.hotspotName
     ? `[find name="${escapeRouterOsString(chrConfig.hotspotName)}"]`
     : '[find]';
+  const loginHtmlUrl = buildMikrotikLoginHtmlUrl(routerToken);
+  const mode = fetchMode(loginHtmlUrl);
 
   return `# SpaiHub hotspot setup (run once on your MikroTik)
-# Adjust interface names and hotspot profile if yours differ from "hotspot1" / default profile.
+# Requires an existing hotspot server. Verify with: /ip hotspot print
+# RouterOS has no login-url property — redirect is installed as hotspot/login.html
 
 # Allow subscribers to reach SpaiHub portal and API before login
 /ip hotspot walled-garden ip remove [find comment~"spaihub"]
@@ -238,11 +255,20 @@ ${buildProfileSetupLines()}
 
 ${buildAntiTetheringLines(enableAntiTethering)}
 
-# Send unauthenticated users to the SpaiHub captive portal
-/ip hotspot profile set ${profileTarget} login-by=http-chap,http-pap,https html-directory=hotspot login-url="${portalUrl}"
+# Apply login methods + html directory on every profile used by a hotspot
+:foreach hsId in=[/ip hotspot find] do={
+  :local p [/ip hotspot get $hsId profile]
+  /ip hotspot profile set $p login-by=http-chap,http-pap,https html-directory=hotspot
+}
 /ip hotspot set ${hotspotTarget} disabled=no
 
-# Optional: test redirect locally by opening this URL in a browser:
+# Download SpaiHub redirect page into the hotspot HTML directory
+/tool fetch url="${loginHtmlUrl}" mode=${mode} dst-path=hotspot/login.html
+
+# If fetch fails, upload login.html via Winbox Files → hotspot/login.html from:
+# ${loginHtmlUrl}
+
+# Optional: test the portal in a browser (does not need the router):
 # ${buildPreviewPortalUrl(routerToken)}`;
 }
 

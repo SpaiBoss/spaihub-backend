@@ -12,6 +12,7 @@ import {
   effectiveAccessDeviceLimit,
 } from '../services/accessPolicy.js';
 import { resolvePortalBranding, brandingSelectFields } from '../utils/portalBranding.js';
+import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
 
 const FEE_PERCENT = Number(process.env.PLATFORM_FEE_PERCENT) || 2;
 
@@ -58,14 +59,17 @@ function normalizePin(pin) {
   return String(pin || '').trim();
 }
 
-async function provisionHotspotUser({ routerId, location, pkg, sessionMinutes, username, password }) {
+async function provisionHotspotUser({ routerId, location, pkg, username, password }) {
+  const access = resolvePackageAccessLimits(pkg);
+
   await mikrotik.grantAccess({
     routerId,
     username,
     password,
-    sessionMinutes,
-    dataCapMb: pkg.dataCapMb,
-    uploadSpeedMbPerSec: pkg.uploadSpeedMbPerSec ?? 1,
+    sessionMinutes: access.sessionMinutes,
+    packageType: access.packageType,
+    dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
+    uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
     sharedUsers: effectiveAccessDeviceLimit(location.maxDevicesPerAccessCode),
   });
 }
@@ -410,7 +414,6 @@ export async function redeemVoucher(req, res, next) {
       routerId: router.id,
       location: router.location,
       pkg: voucher.package,
-      sessionMinutes: voucher.package.durationMinutes,
       username: hotspotUsername,
       password: hotspotPin,
     });
@@ -452,7 +455,7 @@ async function processCampayStatus(reference, status) {
     return prisma.transaction.findFirst({
       where: { id: transaction.id },
       include: {
-        package: { select: { name: true, dataCapMb: true } },
+        package: { select: { name: true, type: true, dataCapMb: true, durationMinutes: true } },
       },
     });
   }
@@ -491,7 +494,7 @@ export async function checkPaymentStatus(req, res, next) {
         routerId: router.id,
         deviceId: deviceId.trim(),
       },
-      include: { package: { select: { name: true, dataCapMb: true } } },
+      include: { package: { select: { name: true, type: true, dataCapMb: true, durationMinutes: true } } },
     });
 
     if (!transaction) {
@@ -526,7 +529,7 @@ export async function checkPaymentStatus(req, res, next) {
         status: 'SUCCESS',
         ...sessionResponse({
           ...updated,
-          package: transaction.package,
+          package: updated.package ?? transaction.package,
           sessionEnd: updated.sessionEnd,
         }),
       });

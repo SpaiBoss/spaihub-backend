@@ -16,8 +16,24 @@ function formatMikrotikTimeout(minutes) {
 }
 
 function formatBytesLimit(dataCapMb) {
-  if (!dataCapMb) return null;
+  if (!dataCapMb || Number(dataCapMb) <= 0) return null;
   return Number(dataCapMb) * 1024 * 1024;
+}
+
+function resolveByteLimit(payload) {
+  const dataCapMb = payload?.dataCapMb;
+  const packageType = payload?.packageType;
+
+  if (packageType === 'TIME_BASED') {
+    return dataCapMb ? formatBytesLimit(dataCapMb) : null;
+  }
+
+  if (packageType === 'DATA_BASED') {
+    return formatBytesLimit(dataCapMb);
+  }
+
+  // Legacy commands (before packageType): only apply cap when explicitly set
+  return dataCapMb ? formatBytesLimit(dataCapMb) : null;
 }
 
 export function buildPortalUrl(routerToken, mac = '$(mac)') {
@@ -48,7 +64,7 @@ export function commandToRouterOs(cmd) {
     const sharedUsers = Math.max(1, Number(cmd.payload.sharedUsers) || 1);
     const uploadMbit = (cmd.payload.uploadSpeedMbPerSec || 1) * 8;
     const profile = `spaihub-${sharedUsers}`;
-    const byteLimit = formatBytesLimit(cmd.payload.dataCapMb);
+    const byteLimit = resolveByteLimit(cmd.payload);
     const limitBytesLine = byteLimit
       ? ` limit-bytes-total=${byteLimit}`
       : '';

@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { normalizePackageDataCap } from '../utils/packageAccess.js';
 
 async function verifyLocationOwnership(locationId, ownerId) {
   return prisma.location.findFirst({ where: { id: locationId, ownerId } });
@@ -72,7 +73,7 @@ export async function createPackage(req, res, next) {
       type,
       durationMinutes: Number(durationMinutes),
       priceXaf: Number(priceXaf),
-      dataCapMb: dataCapMb ? Number(dataCapMb) : null,
+      dataCapMb: normalizePackageDataCap(type, dataCapMb),
       uploadSpeedMbPerSec: Number(uploadSpeedMbPerSec),
     };
 
@@ -121,7 +122,11 @@ export async function updatePackage(req, res, next) {
     const nextDuration = durationMinutes !== undefined ? Number(durationMinutes) : existing.durationMinutes;
     const nextPrice = priceXaf !== undefined ? Number(priceXaf) : existing.priceXaf;
     const nextDataCap =
-      dataCapMb !== undefined ? (dataCapMb ? Number(dataCapMb) : null) : existing.dataCapMb;
+      dataCapMb !== undefined
+        ? normalizePackageDataCap(nextType, dataCapMb)
+        : nextType !== existing.type
+          ? normalizePackageDataCap(nextType, null)
+          : existing.dataCapMb;
     const nextUploadSpeed =
       uploadSpeedMbPerSec !== undefined
         ? Number(uploadSpeedMbPerSec)

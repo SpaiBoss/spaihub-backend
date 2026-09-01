@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
 
 export async function findActiveSession(routerId, { deviceId, phone, mac }) {
   const now = new Date();
@@ -21,6 +22,7 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
     package: {
       select: {
         name: true,
+        type: true,
         dataCapMb: true,
         durationMinutes: true,
       },
@@ -57,11 +59,15 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
 }
 
 export function sessionResponse(session) {
+  const access = resolvePackageAccessLimits(session.package);
+
   return {
     active: true,
     sessionEnd: session.sessionEnd,
     packageName: session.package.name,
-    dataCapMb: session.package.dataCapMb,
+    packageType: access.packageType,
+    dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
+    durationMinutes: session.package.durationMinutes,
     hotspotUsername: session.hotspotUsername,
     hotspotPin: session.hotspotPin,
   };

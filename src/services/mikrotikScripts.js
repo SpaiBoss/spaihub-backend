@@ -1,5 +1,6 @@
 import { escapeRouterOsString } from '../utils/hotspotCredentials.js';
 import { DEFAULT_CHR_CONFIG } from '../utils/chrConfig.js';
+import { buildMikrotikRateLimit } from '../utils/rateLimit.js';
 
 const API_BASE = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 4000}`;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -62,7 +63,10 @@ export function commandToRouterOs(cmd) {
   if (cmd.type === 'GRANT_ACCESS') {
     const timeout = formatMikrotikTimeout(cmd.payload.sessionMinutes);
     const sharedUsers = Math.max(1, Number(cmd.payload.sharedUsers) || 1);
-    const uploadMbit = (cmd.payload.uploadSpeedMbPerSec || 1) * 8;
+    const rateLimit = buildMikrotikRateLimit(
+      cmd.payload.uploadSpeedMbPerSec,
+      cmd.payload.downloadSpeedMbPerSec
+    );
     const profile = `spaihub-${sharedUsers}`;
     const byteLimit = resolveByteLimit(cmd.payload);
     const limitBytesLine = byteLimit
@@ -75,7 +79,9 @@ export function commandToRouterOs(cmd) {
       `:local password "${safePassword}"`,
       `:local profile "${profile}"`,
       `:if ([:len [/ip hotspot user profile find name=$profile]] = 0) do={`,
-      `  /ip hotspot user profile add name=$profile shared-users=${sharedUsers} mac-cookie-timeout=1d rate-limit="${uploadMbit}M/0"`,
+      `  /ip hotspot user profile add name=$profile shared-users=${sharedUsers} mac-cookie-timeout=1d rate-limit="${rateLimit}"`,
+      `} else={`,
+      `  /ip hotspot user profile set [find name=$profile] shared-users=${sharedUsers} rate-limit="${rateLimit}"`,
       `}`,
       `/ip hotspot user remove [find name=$username comment~"spaihub"]`,
       `/ip hotspot active remove [find user=$username]`,
@@ -138,13 +144,14 @@ export function buildConnectionScript(routerToken) {
 }
 
 function buildProfileSetupLines() {
+  const rateLimit = buildMikrotikRateLimit(1, null);
   const lines = [
     '# SpaiHub user profiles (shared-users controls simultaneous logins per credential)',
     '/ip hotspot user profile remove [find name~"^spaihub-"]',
   ];
   for (let n = 1; n <= 5; n += 1) {
     lines.push(
-      `/ip hotspot user profile add name=spaihub-${n} shared-users=${n} mac-cookie-timeout=1d rate-limit=8M/0`
+      `/ip hotspot user profile add name=spaihub-${n} shared-users=${n} mac-cookie-timeout=1d rate-limit="${rateLimit}"`
     );
   }
   return lines.join('\n');

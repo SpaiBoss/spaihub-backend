@@ -2,10 +2,14 @@
  * Resolve MikroTik access limits from a package record.
  * TIME_BASED: limit-uptime only, unless owner enabled optional data cap (dataCapMb set).
  * DATA_BASED: limit-bytes-total from dataCapMb + expiry via limit-uptime.
+ * Download speed is platform-wide (see HOTSPOT_DOWNLOAD_SPEED_MB_PER_SEC).
  */
+import { getPlatformDownloadSpeedMbPerSec } from './rateLimit.js';
+
 export function resolvePackageAccessLimits(pkg) {
   const sessionMinutes = Number(pkg.durationMinutes) || 0;
   const uploadSpeedMbPerSec = Number(pkg.uploadSpeedMbPerSec) || 1;
+  const downloadSpeedMbPerSec = getPlatformDownloadSpeedMbPerSec();
   const type = pkg.type || 'TIME_BASED';
 
   if (type === 'DATA_BASED') {
@@ -14,6 +18,7 @@ export function resolvePackageAccessLimits(pkg) {
       sessionMinutes,
       dataCapMb: pkg.dataCapMb ?? null,
       uploadSpeedMbPerSec,
+      downloadSpeedMbPerSec,
       applyByteLimit: !!(pkg.dataCapMb && pkg.dataCapMb > 0),
     };
   }
@@ -26,6 +31,7 @@ export function resolvePackageAccessLimits(pkg) {
     sessionMinutes,
     dataCapMb: optionalCap,
     uploadSpeedMbPerSec,
+    downloadSpeedMbPerSec,
     applyByteLimit: optionalCap != null,
   };
 }

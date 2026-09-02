@@ -8,6 +8,7 @@ export async function grantAccess({
   packageType = 'TIME_BASED',
   dataCapMb,
   uploadSpeedMbPerSec = 1,
+  downloadSpeedMbPerSec = null,
   sharedUsers = 1,
 }) {
   await prisma.routerCommand.create({
@@ -21,6 +22,7 @@ export async function grantAccess({
         packageType,
         dataCapMb: dataCapMb ?? null,
         uploadSpeedMbPerSec,
+        downloadSpeedMbPerSec,
         sharedUsers,
       },
     },

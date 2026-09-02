@@ -41,6 +41,8 @@ services:
         sync: false
       - key: PLATFORM_FEE_PERCENT
         value: "2"
+      - key: HOTSPOT_DOWNLOAD_SPEED_MB_PER_SEC
+        value: "3"
       - key: R2_ENDPOINT
         sync: false
       - key: R2_BUCKET

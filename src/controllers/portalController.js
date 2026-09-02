@@ -71,6 +71,7 @@ async function provisionHotspotUser({ routerId, location, pkg, username, passwor
     packageType: access.packageType,
     dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
+    downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
     sharedUsers: effectiveAccessDeviceLimit(location.maxDevicesPerAccessCode),
   });
 }

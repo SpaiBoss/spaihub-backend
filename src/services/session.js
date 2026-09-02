@@ -40,6 +40,7 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     packageType: access.packageType,
     dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
+    downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
     sharedUsers,
   });
 

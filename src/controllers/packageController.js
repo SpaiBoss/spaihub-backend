@@ -1,11 +1,18 @@
 import prisma from '../utils/prisma.js';
-import { normalizePackageDataCap } from '../utils/packageAccess.js';
+import { normalizePackageDataCap, normalizeMaxSharedDevices } from '../utils/packageAccess.js';
 
 async function verifyLocationOwnership(locationId, ownerId) {
   return prisma.location.findFirst({ where: { id: locationId, ownerId } });
 }
 
-function validatePackageInput({ type, durationMinutes, priceXaf, dataCapMb, uploadSpeedMbPerSec }) {
+function validatePackageInput({
+  type,
+  durationMinutes,
+  priceXaf,
+  dataCapMb,
+  uploadSpeedMbPerSec,
+  maxSharedDevices,
+}) {
   if (!durationMinutes || durationMinutes <= 0) {
     return 'Duration must be greater than 0';
   }
@@ -17,6 +24,11 @@ function validatePackageInput({ type, durationMinutes, priceXaf, dataCapMb, uplo
   }
   if (uploadSpeedMbPerSec > 100) {
     return 'Upload speed cannot exceed 100 MB/s';
+  }
+
+  const shared = normalizeMaxSharedDevices(maxSharedDevices ?? 1);
+  if (shared < 1 || shared > 20) {
+    return 'Simultaneous devices must be between 1 and 20';
   }
 
   if (type === 'DATA_BASED') {
@@ -54,7 +66,7 @@ export async function getPackages(req, res, next) {
 export async function createPackage(req, res, next) {
   try {
     const { locationId } = req.params;
-    const { name, type = 'TIME_BASED', durationMinutes, priceXaf, dataCapMb, uploadSpeedMbPerSec = 1 } = req.body;
+    const { name, type = 'TIME_BASED', durationMinutes, priceXaf, dataCapMb, uploadSpeedMbPerSec = 1, maxSharedDevices = 1 } = req.body;
 
     const location = await verifyLocationOwnership(locationId, req.owner.id);
     if (!location) {
@@ -75,6 +87,7 @@ export async function createPackage(req, res, next) {
       priceXaf: Number(priceXaf),
       dataCapMb: normalizePackageDataCap(type, dataCapMb),
       uploadSpeedMbPerSec: Number(uploadSpeedMbPerSec),
+      maxSharedDevices: normalizeMaxSharedDevices(maxSharedDevices),
     };
 
     const validationError = validatePackageInput(parsed);
@@ -91,6 +104,7 @@ export async function createPackage(req, res, next) {
         priceXaf: parsed.priceXaf,
         dataCapMb: parsed.dataCapMb,
         uploadSpeedMbPerSec: parsed.uploadSpeedMbPerSec,
+        maxSharedDevices: parsed.maxSharedDevices,
       },
     });
 
@@ -103,7 +117,7 @@ export async function createPackage(req, res, next) {
 export async function updatePackage(req, res, next) {
   try {
     const { locationId, packageId } = req.params;
-    const { name, type, durationMinutes, priceXaf, dataCapMb, uploadSpeedMbPerSec } = req.body;
+    const { name, type, durationMinutes, priceXaf, dataCapMb, uploadSpeedMbPerSec, maxSharedDevices } = req.body;
 
     const location = await verifyLocationOwnership(locationId, req.owner.id);
     if (!location) {
@@ -131,6 +145,10 @@ export async function updatePackage(req, res, next) {
       uploadSpeedMbPerSec !== undefined
         ? Number(uploadSpeedMbPerSec)
         : existing.uploadSpeedMbPerSec;
+    const nextSharedDevices =
+      maxSharedDevices !== undefined
+        ? normalizeMaxSharedDevices(maxSharedDevices)
+        : existing.maxSharedDevices;
 
     const validationError = validatePackageInput({
       type: nextType,
@@ -138,6 +156,7 @@ export async function updatePackage(req, res, next) {
       priceXaf: nextPrice,
       dataCapMb: nextDataCap,
       uploadSpeedMbPerSec: nextUploadSpeed,
+      maxSharedDevices: nextSharedDevices,
     });
     if (validationError) {
       return res.status(400).json({ error: validationError });
@@ -152,6 +171,7 @@ export async function updatePackage(req, res, next) {
         priceXaf: nextPrice,
         dataCapMb: nextDataCap,
         uploadSpeedMbPerSec: nextUploadSpeed,
+        maxSharedDevices: nextSharedDevices,
       },
     });
 

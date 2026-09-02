@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { normalizeMaxSharedDevices } from '../utils/packageAccess.js';
 
 /** 0 means one device per access code (owner default). */
 export function effectiveAccessDeviceLimit(maxDevicesPerAccessCode) {
@@ -19,28 +20,34 @@ export async function getActiveVoucherSessions(voucherId) {
   });
 }
 
-export function validateAccessPolicy(location, { activeDeviceCount, isExistingDevice }) {
+export function validateAccessPolicy(location, { activeDeviceCount, isExistingDevice, deviceLimit }) {
   if (isExistingDevice) {
     return { ok: true };
   }
 
-  const totalLimit = effectiveAccessDeviceLimit(location.maxDevicesPerAccessCode);
+  const totalLimit =
+    deviceLimit != null
+      ? normalizeMaxSharedDevices(deviceLimit)
+      : effectiveAccessDeviceLimit(location.maxDevicesPerAccessCode);
 
   if (activeDeviceCount >= totalLimit) {
     return {
       ok: false,
-      error: 'This access code is already in use on the maximum number of devices',
+      error:
+        totalLimit === 1
+          ? 'This access code is already in use on another device'
+          : `This access code is already in use on the maximum of ${totalLimit} devices`,
     };
   }
 
-  if (activeDeviceCount >= 1 && !location.allowHotspotSharing) {
+  if (totalLimit <= 1 && activeDeviceCount >= 1 && !location.allowHotspotSharing) {
     return {
       ok: false,
       error: 'Hotspot sharing is disabled. Only one device can use each access code.',
     };
   }
 
-  if (activeDeviceCount >= 1 && location.allowHotspotSharing) {
+  if (totalLimit <= 1 && activeDeviceCount >= 1 && location.allowHotspotSharing) {
     const hotspotLimit = Math.max(0, Number(location.maxHotspotDevices) || 0);
     const secondaryDevices = activeDeviceCount;
     if (secondaryDevices > hotspotLimit) {

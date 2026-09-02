@@ -6,10 +6,18 @@
  */
 import { getPlatformDownloadSpeedMbPerSec } from './rateLimit.js';
 
+/** Clamp package shared-device count for MikroTik shared-users. */
+export function normalizeMaxSharedDevices(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(20, Math.round(n));
+}
+
 export function resolvePackageAccessLimits(pkg) {
   const sessionMinutes = Number(pkg.durationMinutes) || 0;
   const uploadSpeedMbPerSec = Number(pkg.uploadSpeedMbPerSec) || 1;
   const downloadSpeedMbPerSec = getPlatformDownloadSpeedMbPerSec();
+  const sharedUsers = normalizeMaxSharedDevices(pkg.maxSharedDevices);
   const type = pkg.type || 'TIME_BASED';
 
   if (type === 'DATA_BASED') {
@@ -19,6 +27,7 @@ export function resolvePackageAccessLimits(pkg) {
       dataCapMb: pkg.dataCapMb ?? null,
       uploadSpeedMbPerSec,
       downloadSpeedMbPerSec,
+      sharedUsers,
       applyByteLimit: !!(pkg.dataCapMb && pkg.dataCapMb > 0),
     };
   }
@@ -32,6 +41,7 @@ export function resolvePackageAccessLimits(pkg) {
     dataCapMb: optionalCap,
     uploadSpeedMbPerSec,
     downloadSpeedMbPerSec,
+    sharedUsers,
     applyByteLimit: optionalCap != null,
   };
 }

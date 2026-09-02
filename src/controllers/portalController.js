@@ -10,7 +10,6 @@ import { normalizeCameroonMobileLocal, toCampayPhone } from '../utils/phone.js';
 import {
   getActiveVoucherSessions,
   validateAccessPolicy,
-  effectiveAccessDeviceLimit,
 } from '../services/accessPolicy.js';
 import { resolvePortalBranding, brandingSelectFields } from '../utils/portalBranding.js';
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
@@ -72,7 +71,7 @@ async function provisionHotspotUser({ routerId, location, pkg, username, passwor
     dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
     downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
-    sharedUsers: effectiveAccessDeviceLimit(location.maxDevicesPerAccessCode),
+    sharedUsers: access.sharedUsers,
   });
 }
 
@@ -241,6 +240,14 @@ export async function initiatePayment(req, res, next) {
       return res.status(409).json({ error: 'You already have an active session on this network.' });
     }
 
+    const activeForPhone = await findActiveSession(router.id, { phone: localPhone });
+    if (activeForPhone) {
+      return res.status(409).json({
+        error:
+          'This number already has an active WiFi session. Share your username and PIN with other devices, or wait until it expires.',
+      });
+    }
+
     const pendingPayment = await prisma.transaction.findFirst({
       where: {
         routerId: router.id,
@@ -381,6 +388,7 @@ export async function redeemVoucher(req, res, next) {
     const policyCheck = validateAccessPolicy(router.location, {
       activeDeviceCount: activeSessions.length,
       isExistingDevice,
+      deviceLimit: voucher.package.maxSharedDevices,
     });
 
     if (!policyCheck.ok) {

@@ -59,6 +59,18 @@ enum DeploymentType {
   CHR
 }
 
+enum WhatsappMessageType {
+  PAYMENT_CONFIRMED
+  SESSION_EXPIRING
+  SESSION_EXPIRED
+}
+
+enum WhatsappNotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 model Owner {
   id                 String      @id @default(uuid())
   name               String
@@ -133,6 +145,7 @@ model Package {
   priceXaf            Int
   dataCapMb           Int?
   uploadSpeedMbPerSec Int         @default(1)
+  maxSharedDevices    Int         @default(1)
   isActive            Boolean     @default(true)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
@@ -164,11 +177,12 @@ model Transaction {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
-  owner    Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  router   Router   @relation(fields: [routerId], references: [id], onDelete: Cascade)
-  package  Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
-  voucher  Voucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+  owner                 Owner                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  location              Location               @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  router                Router                 @relation(fields: [routerId], references: [id], onDelete: Cascade)
+  package               Package                @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  voucher               Voucher?               @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+  whatsappNotifications WhatsappNotification[]
 
   @@index([campayReference])
   @@index([subscriberMac, routerId])
@@ -176,6 +190,27 @@ model Transaction {
   @@index([subscriberPhone, routerId])
   @@index([voucherId])
   @@index([ownerId, createdAt])
+}
+
+model WhatsappNotification {
+  id              String                      @id @default(uuid())
+  recipientPhone  String
+  sessionId       String?
+  messageType     WhatsappMessageType
+  payload         Json?
+  status          WhatsappNotificationStatus  @default(PENDING)
+  lastError       String?
+  sentAt          DateTime?
+  openwaMessageId String?
+  transactionId   String
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@unique([transactionId, messageType])
+  @@index([status, createdAt])
+  @@index([recipientPhone])
 }
 
 model Withdrawal {

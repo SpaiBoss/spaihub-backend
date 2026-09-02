@@ -1,6 +1,5 @@
 import * as mikrotik from './mikrotik.js';
 import { generateHotspotPin, normalizeHotspotUsername } from '../utils/hotspotCredentials.js';
-import { effectiveAccessDeviceLimit } from './accessPolicy.js';
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
 
 export async function completePaidSession(tx, { transaction, pkg, routerId, location }) {
@@ -29,7 +28,6 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     data: { walletBalance: { increment: transaction.ownerCreditXaf } },
   });
 
-  const sharedUsers = effectiveAccessDeviceLimit(location?.maxDevicesPerAccessCode);
   const access = resolvePackageAccessLimits(pkg);
 
   await mikrotik.grantAccess({
@@ -41,7 +39,7 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
     downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
-    sharedUsers,
+    sharedUsers: access.sharedUsers,
   });
 
   return { sessionStart: now, sessionEnd, hotspotUsername, hotspotPin };

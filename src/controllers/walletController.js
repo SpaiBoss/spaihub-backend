@@ -4,6 +4,7 @@ import {
   normalizeCameroonMobileLocal,
   paymentMethodForOperator,
 } from '../utils/phone.js';
+import { readIdempotencyKey } from '../utils/idempotency.js';
 import { sendWithdrawalStatusEmail } from '../services/email.js';
 import {
   completeWithdrawalDisbursement,
@@ -12,6 +13,23 @@ import {
 } from '../services/withdrawalDisbursement.js';
 
 const MIN_WITHDRAWAL = 100;
+
+function withdrawalResponse(withdrawal, { pendingAdminRetry = false, message, error } = {}) {
+  if (pendingAdminRetry) {
+    return {
+      status: 'PENDING',
+      pendingAdminRetry: true,
+      message,
+      error,
+      withdrawal: {
+        id: withdrawal.id,
+        amountXaf: withdrawal.amountXaf,
+        status: withdrawal.status,
+      },
+    };
+  }
+  return withdrawal;
+}
 
 export async function getWallet(req, res, next) {
   try {
@@ -51,6 +69,7 @@ export async function getWallet(req, res, next) {
 export async function requestWithdrawal(req, res, next) {
   try {
     const { amountXaf, phoneNumber, method: requestedMethod } = req.body;
+    const idempotencyKey = readIdempotencyKey(req);
 
     if (!amountXaf || amountXaf < MIN_WITHDRAWAL) {
       return res.status(400).json({ error: `Minimum withdrawal is ${MIN_WITHDRAWAL} XAF` });
@@ -74,28 +93,57 @@ export async function requestWithdrawal(req, res, next) {
       return res.status(400).json({ error: `This number is ${network}. Use the matching Mobile Money network.` });
     }
 
-    const withdrawal = await prisma.$transaction(async (tx) => {
-      const owner = await tx.owner.findUnique({ where: { id: req.owner.id } });
+    if (idempotencyKey) {
+      const existing = await prisma.withdrawal.findUnique({
+        where: { idempotencyKey },
+      });
 
-      if (Number(owner.walletBalance) < amountXaf) {
-        throw Object.assign(new Error('Insufficient wallet balance'), { statusCode: 400 });
+      if (existing) {
+        if (existing.ownerId !== req.owner.id) {
+          return res.status(409).json({ error: 'Duplicate request.' });
+        }
+
+        const statusCode = existing.status === 'PENDING' ? 202 : 201;
+        return res.status(statusCode).json(existing);
       }
+    }
 
-      await tx.owner.update({
-        where: { id: req.owner.id },
-        data: { walletBalance: { decrement: amountXaf } },
-      });
+    let withdrawal;
+    try {
+      withdrawal = await prisma.$transaction(async (tx) => {
+        const debited = await tx.owner.updateMany({
+          where: {
+            id: req.owner.id,
+            walletBalance: { gte: amountXaf },
+          },
+          data: { walletBalance: { decrement: amountXaf } },
+        });
 
-      return tx.withdrawal.create({
-        data: {
-          ownerId: req.owner.id,
-          amountXaf: Number(amountXaf),
-          phoneNumber: localPhone,
-          method,
-          status: 'PENDING',
-        },
+        if (debited.count === 0) {
+          throw Object.assign(new Error('Insufficient wallet balance'), { statusCode: 400 });
+        }
+
+        return tx.withdrawal.create({
+          data: {
+            ownerId: req.owner.id,
+            amountXaf: Number(amountXaf),
+            phoneNumber: localPhone,
+            method,
+            status: 'PENDING',
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
+        });
       });
-    });
+    } catch (err) {
+      if (err.code === 'P2002' && idempotencyKey) {
+        const existing = await prisma.withdrawal.findUnique({ where: { idempotencyKey } });
+        if (existing && existing.ownerId === req.owner.id) {
+          const statusCode = existing.status === 'PENDING' ? 202 : 201;
+          return res.status(statusCode).json(existing);
+        }
+      }
+      throw err;
+    }
 
     if (!isAutoDisburseEnabled()) {
       return res.status(201).json(withdrawal);
@@ -120,13 +168,13 @@ export async function requestWithdrawal(req, res, next) {
       const clearCampayReference = err.statusCode === 400 || err.statusCode === 502;
       await holdWithdrawalForAdminRetry(withdrawal.id, message, { clearCampayReference });
 
-      return res.status(202).json({
-        status: 'PENDING',
-        pendingAdminRetry: true,
-        message: 'Withdrawal is queued. An admin will complete the MoMo transfer shortly.',
-        error: message,
-        withdrawal: { id: withdrawal.id, amountXaf: withdrawal.amountXaf, status: 'PENDING' },
-      });
+      return res.status(202).json(
+        withdrawalResponse(withdrawal, {
+          pendingAdminRetry: true,
+          message: 'Withdrawal is queued. An admin will complete the MoMo transfer shortly.',
+          error: message,
+        })
+      );
     }
   } catch (err) {
     if (err.statusCode) {

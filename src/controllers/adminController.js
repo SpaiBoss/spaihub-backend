@@ -383,14 +383,20 @@ export async function processWithdrawal(req, res, next) {
 
     if (action === 'MANUAL_APPROVED') {
       const note = adminNote?.trim() || 'Paid manually via Campay dashboard';
-      const updated = await prisma.withdrawal.update({
-        where: { id },
+      const approved = await prisma.withdrawal.updateMany({
+        where: { id, status: 'PENDING' },
         data: {
           status: 'APPROVED',
           adminNote: note,
           processedAt: new Date(),
         },
       });
+
+      if (approved.count === 0) {
+        return res.status(400).json({ error: 'Withdrawal has already been processed' });
+      }
+
+      const updated = await prisma.withdrawal.findUnique({ where: { id } });
 
       try {
         await sendWithdrawalStatusEmail(withdrawal.owner.email, {

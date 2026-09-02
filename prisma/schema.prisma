@@ -169,7 +169,7 @@ model Transaction {
   amountXaf        Int
   platformFeeXaf   Int
   ownerCreditXaf   Int
-  campayReference  String?
+  campayReference  String?           @unique
   voucherId        String?
   status           TransactionStatus @default(PENDING)
   sessionStart     DateTime?
@@ -184,7 +184,6 @@ model Transaction {
   voucher               Voucher?               @relation(fields: [voucherId], references: [id], onDelete: SetNull)
   whatsappNotifications WhatsappNotification[]
 
-  @@index([campayReference])
   @@index([subscriberMac, routerId])
   @@index([deviceId, routerId])
   @@index([subscriberPhone, routerId])
@@ -214,16 +213,17 @@ model WhatsappNotification {
 }
 
 model Withdrawal {
-  id          String           @id @default(uuid())
-  ownerId     String
-  amountXaf   Int
-  phoneNumber String
-  method      PaymentMethod
+  id              String           @id @default(uuid())
+  ownerId         String
+  amountXaf       Int
+  phoneNumber     String
+  method          PaymentMethod
   status          WithdrawalStatus @default(PENDING)
   adminNote       String?
-  campayReference String?
+  campayReference String?          @unique
+  idempotencyKey  String?          @unique
   createdAt       DateTime         @default(now())
-  processedAt DateTime?
+  processedAt     DateTime?
 
   owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 }

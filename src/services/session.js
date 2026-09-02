@@ -12,8 +12,8 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     throw Object.assign(new Error('Invalid subscriber phone for hotspot login'), { statusCode: 400 });
   }
 
-  await tx.transaction.update({
-    where: { id: transaction.id },
+  const claimed = await tx.transaction.updateMany({
+    where: { id: transaction.id, status: 'PENDING' },
     data: {
       status: 'SUCCESS',
       sessionStart: now,
@@ -22,6 +22,10 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
       hotspotPin,
     },
   });
+
+  if (claimed.count === 0) {
+    return null;
+  }
 
   await tx.owner.update({
     where: { id: transaction.ownerId },

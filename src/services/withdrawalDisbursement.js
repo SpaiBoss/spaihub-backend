@@ -86,6 +86,17 @@ async function waitForCampaySuccess(reference) {
 }
 
 export async function disburseWithdrawal(withdrawal) {
+  if (withdrawal.status === 'APPROVED') {
+    return {
+      reference: withdrawal.campayReference,
+      status: 'SUCCESSFUL',
+    };
+  }
+
+  if (withdrawal.status !== 'PENDING') {
+    throw Object.assign(new Error('Withdrawal has already been processed.'), { statusCode: 409 });
+  }
+
   const campayPhone = toCampayPhone(withdrawal.phoneNumber);
   if (!campayPhone) {
     throw Object.assign(new Error('Invalid withdrawal phone number.'), { statusCode: 400 });
@@ -120,10 +131,23 @@ export async function disburseWithdrawal(withdrawal) {
     reference = initiated.reference;
     immediateStatus = initiated.status;
 
-    await prisma.withdrawal.update({
-      where: { id: withdrawal.id },
+    const saved = await prisma.withdrawal.updateMany({
+      where: {
+        id: withdrawal.id,
+        status: 'PENDING',
+        campayReference: null,
+      },
       data: { campayReference: reference },
     });
+
+    if (saved.count === 0) {
+      const current = await prisma.withdrawal.findUnique({ where: { id: withdrawal.id } });
+      if (current?.campayReference) {
+        reference = current.campayReference;
+      } else {
+        throw Object.assign(new Error('Withdrawal is already being processed.'), { statusCode: 409 });
+      }
+    }
   }
 
   if (immediateStatus === 'SUCCESSFUL') {
@@ -140,10 +164,18 @@ export async function completeWithdrawalDisbursement(withdrawalId) {
     throw Object.assign(new Error('Withdrawal not found'), { statusCode: 404 });
   }
 
+  if (withdrawal.status === 'APPROVED') {
+    return withdrawal;
+  }
+
+  if (withdrawal.status !== 'PENDING') {
+    throw Object.assign(new Error('Withdrawal has already been processed.'), { statusCode: 409 });
+  }
+
   const result = await disburseWithdrawal(withdrawal);
 
-  return prisma.withdrawal.update({
-    where: { id: withdrawalId },
+  const completed = await prisma.withdrawal.updateMany({
+    where: { id: withdrawalId, status: 'PENDING' },
     data: {
       status: 'APPROVED',
       campayReference: result.reference,
@@ -151,11 +183,17 @@ export async function completeWithdrawalDisbursement(withdrawalId) {
       processedAt: new Date(),
     },
   });
+
+  if (completed.count === 0) {
+    return prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+  }
+
+  return prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
 }
 
 export async function holdWithdrawalForAdminRetry(withdrawalId, reason, { clearCampayReference = false } = {}) {
-  await prisma.withdrawal.update({
-    where: { id: withdrawalId },
+  await prisma.withdrawal.updateMany({
+    where: { id: withdrawalId, status: 'PENDING' },
     data: {
       adminNote: reason,
       ...(clearCampayReference ? { campayReference: null } : {}),
@@ -165,18 +203,22 @@ export async function holdWithdrawalForAdminRetry(withdrawalId, reason, { clearC
 
 export async function failWithdrawalAndRefund(withdrawal, reason) {
   await prisma.$transaction(async (tx) => {
-    await tx.owner.update({
-      where: { id: withdrawal.ownerId },
-      data: { walletBalance: { increment: withdrawal.amountXaf } },
-    });
-
-    await tx.withdrawal.update({
-      where: { id: withdrawal.id },
+    const rejected = await tx.withdrawal.updateMany({
+      where: { id: withdrawal.id, status: 'PENDING' },
       data: {
         status: 'REJECTED',
         adminNote: reason,
         processedAt: new Date(),
       },
+    });
+
+    if (rejected.count === 0) {
+      return;
+    }
+
+    await tx.owner.update({
+      where: { id: withdrawal.ownerId },
+      data: { walletBalance: { increment: withdrawal.amountXaf } },
     });
   });
 }

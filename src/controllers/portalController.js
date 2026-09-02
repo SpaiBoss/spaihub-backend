@@ -495,7 +495,7 @@ export async function redeemVoucher(req, res, next) {
 
 async function processCampayStatus(reference, status) {
   const normalizedStatus = normalizeCampayStatus(status);
-  const transaction = await prisma.transaction.findFirst({
+  const transaction = await prisma.transaction.findUnique({
     where: { campayReference: reference },
     include: { package: true, location: true },
   });
@@ -522,8 +522,8 @@ async function processCampayStatus(reference, status) {
   }
 
   if (normalizedStatus === 'FAILED') {
-    await prisma.transaction.update({
-      where: { id: transaction.id },
+    await prisma.transaction.updateMany({
+      where: { id: transaction.id, status: 'PENDING' },
       data: { status: 'FAILED' },
     });
     return prisma.transaction.findUnique({ where: { id: transaction.id } });
@@ -721,13 +721,15 @@ export async function cancelPendingPayment(req, res, next) {
 
 export async function campayWebhook(req, res, next) {
   try {
-    const { reference, status } = req.body;
+    const { reference } = req.body;
 
     if (!reference) {
       return res.status(200).json({ received: true });
     }
 
-    await processCampayStatus(reference, status);
+    // Never trust webhook body alone — confirm status with Campay before moving money.
+    const campayStatus = await campay.getTransactionStatus(reference.trim());
+    await processCampayStatus(reference.trim(), campayStatus.status);
 
     res.status(200).json({ received: true });
   } catch (err) {

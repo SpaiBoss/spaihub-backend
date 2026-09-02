@@ -13,6 +13,11 @@ import {
 } from '../services/accessPolicy.js';
 import { resolvePortalBranding, brandingSelectFields } from '../utils/portalBranding.js';
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
+import {
+  expireStalePendingPayments,
+  findDevicePendingPayment,
+  normalizeCampayStatus,
+} from '../utils/pendingPayment.js';
 
 const FEE_PERCENT = Number(process.env.PLATFORM_FEE_PERCENT) || 2;
 
@@ -254,17 +259,21 @@ export async function initiatePayment(req, res, next) {
       });
     }
 
-    const pendingPayment = await prisma.transaction.findFirst({
-      where: {
-        routerId: router.id,
-        deviceId: trimmedDeviceId,
-        packageId: pkg.id,
-        status: 'PENDING',
-      },
-    });
+    await expireStalePendingPayments(prisma, router.id, trimmedDeviceId);
+
+    const pendingPayment = await findDevicePendingPayment(prisma, router.id, trimmedDeviceId);
     if (pendingPayment) {
-      return res.status(409).json({
-        error: 'A payment for this package is already pending. Approve it on your phone or wait a few minutes.',
+      if (pendingPayment.packageId === pkg.id) {
+        return res.json({
+          reference: pendingPayment.campayReference,
+          resumed: true,
+          message: 'Resuming your pending payment. Approve MoMo on your phone.',
+        });
+      }
+
+      await prisma.transaction.update({
+        where: { id: pendingPayment.id },
+        data: { status: 'FAILED' },
       });
     }
 
@@ -485,6 +494,7 @@ export async function redeemVoucher(req, res, next) {
 }
 
 async function processCampayStatus(reference, status) {
+  const normalizedStatus = normalizeCampayStatus(status);
   const transaction = await prisma.transaction.findFirst({
     where: { campayReference: reference },
     include: { package: true, location: true },
@@ -494,7 +504,7 @@ async function processCampayStatus(reference, status) {
     return transaction;
   }
 
-  if (status === 'SUCCESSFUL') {
+  if (normalizedStatus === 'SUCCESSFUL') {
     await prisma.$transaction(async (tx) => {
       await completePaidSession(tx, {
         transaction,
@@ -511,7 +521,7 @@ async function processCampayStatus(reference, status) {
     });
   }
 
-  if (status === 'FAILED') {
+  if (normalizedStatus === 'FAILED') {
     await prisma.transaction.update({
       where: { id: transaction.id },
       data: { status: 'FAILED' },
@@ -568,12 +578,13 @@ export async function checkPaymentStatus(req, res, next) {
     }
 
     const campayStatus = await campay.getTransactionStatus(reference.trim());
+    const normalizedStatus = normalizeCampayStatus(campayStatus.status);
 
-    if (campayStatus.status === 'PENDING') {
+    if (normalizedStatus === 'PENDING') {
       return res.json({ status: 'PENDING' });
     }
 
-    const updated = await processCampayStatus(reference.trim(), campayStatus.status);
+    const updated = await processCampayStatus(reference.trim(), normalizedStatus);
 
     if (updated?.status === 'SUCCESS') {
       return res.json({
@@ -595,6 +606,115 @@ export async function checkPaymentStatus(req, res, next) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message });
     }
+    next(err);
+  }
+}
+
+export async function getPendingPayment(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const { deviceId } = req.query;
+
+    if (!isValidDeviceId(deviceId)) {
+      return res.status(400).json({ error: 'deviceId is required' });
+    }
+
+    const router = await prisma.router.findFirst({
+      where: { routerToken, isActive: true },
+    });
+
+    if (!router) {
+      return res.status(404).json({ error: 'Router not found' });
+    }
+
+    const trimmedDeviceId = deviceId.trim();
+    await expireStalePendingPayments(prisma, router.id, trimmedDeviceId);
+
+    const pending = await findDevicePendingPayment(prisma, router.id, trimmedDeviceId);
+    if (!pending?.campayReference) {
+      return res.json({ pending: false });
+    }
+
+    try {
+      const campayStatus = await campay.getTransactionStatus(pending.campayReference);
+      const normalizedStatus = normalizeCampayStatus(campayStatus.status);
+
+      if (normalizedStatus === 'SUCCESSFUL') {
+        const updated = await processCampayStatus(pending.campayReference, normalizedStatus);
+        if (updated?.status === 'SUCCESS') {
+          return res.json({
+            pending: false,
+            session: sessionResponse({
+              ...updated,
+              package: updated.package ?? pending.package,
+              sessionEnd: updated.sessionEnd,
+            }),
+          });
+        }
+      }
+
+      if (normalizedStatus === 'FAILED') {
+        await processCampayStatus(pending.campayReference, normalizedStatus);
+        return res.json({ pending: false });
+      }
+    } catch {
+      // Campay lookup failed — still return pending so the portal can keep polling.
+    }
+
+    res.json({
+      pending: true,
+      reference: pending.campayReference,
+      phone: pending.subscriberPhone,
+      packageId: pending.packageId,
+      packageName: pending.package.name,
+      startedAt: pending.createdAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function cancelPendingPayment(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const { deviceId, reference } = req.body;
+
+    if (!isValidDeviceId(deviceId)) {
+      return res.status(400).json({ error: 'deviceId is required' });
+    }
+
+    const router = await prisma.router.findFirst({
+      where: { routerToken, isActive: true },
+    });
+
+    if (!router) {
+      return res.status(404).json({ error: 'Router not found' });
+    }
+
+    const trimmedDeviceId = deviceId.trim();
+    await expireStalePendingPayments(prisma, router.id, trimmedDeviceId);
+
+    const pending = await prisma.transaction.findFirst({
+      where: {
+        routerId: router.id,
+        deviceId: trimmedDeviceId,
+        status: 'PENDING',
+        ...(reference?.trim() ? { campayReference: reference.trim() } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!pending) {
+      return res.json({ cancelled: true });
+    }
+
+    await prisma.transaction.update({
+      where: { id: pending.id },
+      data: { status: 'FAILED' },
+    });
+
+    res.json({ cancelled: true });
+  } catch (err) {
     next(err);
   }
 }

@@ -39,7 +39,7 @@ function resolveByteLimit(payload) {
 export function buildPortalUrl(routerToken, mac = '$(mac)') {
   const base = `${FRONTEND_URL.replace(/\/$/, '')}/portal/${routerToken}`;
   if (mac === '$(mac)') {
-    return `${base}?mac=$(mac)&link-login-only=$(link-login-only)`;
+    return `${base}?mac=$(mac)&link-login-only=$(link-login-only)&link-logout=$(link-logout)`;
   }
   return `${base}?mac=${encodeURIComponent(mac)}`;
 }
@@ -84,12 +84,22 @@ export function commandToRouterOs(cmd) {
   }
 
   if (cmd.type === 'KICK_USER') {
-    return [
+    const macAddress = cmd.payload?.macAddress;
+    const safeMac = macAddress ? escapeRouterOsString(macAddress) : null;
+    const lines = [
       `# SpaiHub KICK_USER ${cmd.id}`,
       `:local username "${safeUsername}"`,
       `/ip hotspot active remove [find user=$username]`,
-      `/ip hotspot user remove [find name=$username comment~"spaihub"]`,
-    ].join('\n');
+      `/ip hotspot cookie remove [find user=$username]`,
+    ];
+
+    if (safeMac) {
+      lines.push(`/ip hotspot active remove [find mac-address="${safeMac}"]`);
+      lines.push(`/ip hotspot cookie remove [find mac-address="${safeMac}"]`);
+    }
+
+    lines.push(`/ip hotspot user remove [find name=$username comment~"spaihub"]`);
+    return lines.join('\n');
   }
 
   return `# SpaiHub: unsupported command type ${cmd.type}`;
@@ -116,7 +126,7 @@ export function buildConnectionScript(routerToken) {
 /tool fetch url=$api http-method=post http-header-field="X-Router-Token: $token" mode=${mode} keep-result=no
 }
 
-/system scheduler add name=spaihub-commands interval=30s on-event={
+/system scheduler add name=spaihub-commands interval=15s on-event={
 :local token "${routerToken}"
 :local api "${API_BASE}/api/router/commands"
 /tool fetch url=$api http-method=get http-header-field="X-Router-Token: $token" mode=${mode} dst-path=spaihub-cmd.rsc

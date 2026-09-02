@@ -3,6 +3,7 @@ import {
   getPortal,
   getMikrotikLoginHtml,
   checkSession,
+  logoutSession,
   checkPaymentStatus,
   initiatePayment,
   redeemVoucher,
@@ -13,6 +14,7 @@ const router = Router();
 router.get('/:routerToken/mikrotik-login.html', getMikrotikLoginHtml);
 router.get('/:routerToken', getPortal);
 router.get('/:routerToken/session', checkSession);
+router.post('/:routerToken/logout', logoutSession);
 router.get('/:routerToken/payment-status', checkPaymentStatus);
 router.post('/:routerToken/pay', initiatePayment);
 router.post('/:routerToken/redeem', redeemVoucher);

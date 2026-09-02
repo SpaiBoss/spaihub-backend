@@ -27,12 +27,15 @@ export async function grantAccess({
   });
 }
 
-export async function kickUser({ routerId, username }) {
+export async function kickUser({ routerId, username, macAddress = null }) {
   await prisma.routerCommand.create({
     data: {
       routerId,
       type: 'KICK_USER',
-      payload: { username },
+      payload: {
+        username,
+        macAddress: macAddress ?? null,
+      },
     },
   });
 }

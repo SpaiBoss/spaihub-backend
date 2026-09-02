@@ -1,5 +1,5 @@
 import prisma from '../utils/prisma.js';
-import * as mikrotik from '../services/mikrotik.js';
+import { endHotspotSession } from '../services/sessionLifecycle.js';
 
 export async function getActiveSessions(req, res, next) {
   try {
@@ -57,17 +57,7 @@ export async function kickSession(req, res, next) {
       return res.status(404).json({ error: 'Active session not found' });
     }
 
-    if (transaction.hotspotUsername && transaction.routerId) {
-      await mikrotik.kickUser({
-        routerId: transaction.routerId,
-        username: transaction.hotspotUsername,
-      });
-    }
-
-    await prisma.transaction.update({
-      where: { id: transaction.id },
-      data: { sessionEnd: now },
-    });
+    await endHotspotSession(transaction);
 
     res.json({ message: 'Session ended' });
   } catch (err) {

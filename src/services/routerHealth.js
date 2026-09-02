@@ -36,7 +36,12 @@ export async function runRouterHealthJob() {
       sessionEnd: { gt: kickWindowStart, lte: now },
       hotspotUsername: { not: null },
     },
-    select: { id: true, routerId: true, hotspotUsername: true },
+    select: {
+      id: true,
+      routerId: true,
+      hotspotUsername: true,
+      subscriberMac: true,
+    },
   });
 
   for (const session of expiredSessions) {
@@ -44,6 +49,7 @@ export async function runRouterHealthJob() {
       await mikrotik.kickUser({
         routerId: session.routerId,
         username: session.hotspotUsername,
+        macAddress: session.subscriberMac,
       });
     } catch (err) {
       logger.warn('Failed to queue kick for expired session', {

@@ -3,6 +3,7 @@ import * as campay from '../services/campay.js';
 import * as mikrotik from '../services/mikrotik.js';
 import { completePaidSession } from '../services/session.js';
 import { findActiveSession, sessionResponse } from '../services/portalSession.js';
+import { endHotspotSession } from '../services/sessionLifecycle.js';
 import { buildMikrotikLoginHtml } from '../services/mikrotikScripts.js';
 import { isValidDeviceId, normalizeMac } from '../utils/deviceId.js';
 import { normalizeCameroonMobileLocal, toCampayPhone } from '../utils/phone.js';
@@ -155,6 +156,41 @@ export async function checkSession(req, res, next) {
     }
 
     res.json(sessionResponse(session));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function logoutSession(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const { deviceId, mac } = req.body;
+
+    if (!isValidDeviceId(deviceId)) {
+      return res.status(400).json({ error: 'deviceId is required' });
+    }
+
+    const router = await prisma.router.findFirst({
+      where: { routerToken, isActive: true },
+    });
+
+    if (!router) {
+      return res.status(404).json({ error: 'Router not found' });
+    }
+
+    const normalizedMac = normalizeMac(mac);
+    const session = await findActiveSession(router.id, {
+      deviceId: deviceId.trim(),
+      mac: normalizedMac,
+    });
+
+    if (!session) {
+      return res.json({ message: 'No active session', active: false });
+    }
+
+    await endHotspotSession(session);
+
+    res.json({ message: 'Logged out', active: false });
   } catch (err) {
     next(err);
   }

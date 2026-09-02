@@ -8,6 +8,10 @@ import {
 } from '../services/withdrawalDisbursement.js';
 import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
 import { parseTransactionFilters } from '../utils/queryValidation.js';
+import { kickAllActiveSessionsForOwner } from '../services/sessionLifecycle.js';
+import { countDeadLetterCommands } from '../services/routerCommandService.js';
+import { processCampayStatus } from '../controllers/portalController.js';
+import { normalizeCampayStatus } from '../utils/pendingPayment.js';
 import {
   startOfDay,
   endOfDay,
@@ -38,6 +42,7 @@ export async function getPlatformStats(req, res, next) {
       lastMonthTotals,
       pendingTransactions,
       failedTransactionsMonth,
+      deadLetterCommands24h,
     ] = await Promise.all([
       prisma.owner.count(),
       prisma.owner.count({ where: { status: 'ACTIVE' } }),
@@ -65,6 +70,7 @@ export async function getPlatformStats(req, res, next) {
       prisma.transaction.count({
         where: { status: 'FAILED', createdAt: { gte: monthStart, lte: now } },
       }),
+      countDeadLetterCommands(24),
     ]);
 
     const monthFeeChangePercent =
@@ -91,6 +97,7 @@ export async function getPlatformStats(req, res, next) {
       monthFeeChangePercent,
       pendingTransactions,
       failedTransactionsMonth,
+      deadLetterCommands24h,
     });
   } catch (err) {
     next(err);
@@ -138,7 +145,7 @@ export async function getOwners(req, res, next) {
     const limit = 20;
     const skip = (page - 1) * limit;
 
-    const [owners, total] = await Promise.all([
+    const [owners, total, revenueByOwner] = await Promise.all([
       prisma.owner.findMany({
         skip,
         take: limit,
@@ -146,27 +153,28 @@ export async function getOwners(req, res, next) {
         include: { _count: { select: { locations: true, transactions: true } } },
       }),
       prisma.owner.count(),
+      prisma.transaction.groupBy({
+        by: ['ownerId'],
+        where: { status: 'SUCCESS' },
+        _sum: { ownerCreditXaf: true },
+      }),
     ]);
 
-    const ownerStats = await Promise.all(
-      owners.map(async (owner) => {
-        const revenue = await prisma.transaction.aggregate({
-          where: { ownerId: owner.id, status: 'SUCCESS' },
-          _sum: { ownerCreditXaf: true },
-        });
-        return {
-          id: owner.id,
-          name: owner.name,
-          email: owner.email,
-          status: owner.status,
-          totalTransactions: owner._count.transactions,
-          totalRevenue: revenue._sum.ownerCreditXaf || 0,
-          walletBalance: Number(owner.walletBalance),
-          locationCount: owner._count.locations,
-          createdAt: owner.createdAt,
-        };
-      })
+    const revenueMap = Object.fromEntries(
+      revenueByOwner.map((row) => [row.ownerId, row._sum.ownerCreditXaf || 0])
     );
+
+    const ownerStats = owners.map((owner) => ({
+      id: owner.id,
+      name: owner.name,
+      email: owner.email,
+      status: owner.status,
+      totalTransactions: owner._count.transactions,
+      totalRevenue: revenueMap[owner.id] || 0,
+      walletBalance: Number(owner.walletBalance),
+      locationCount: owner._count.locations,
+      createdAt: owner.createdAt,
+    }));
 
     res.json({
       owners: ownerStats,
@@ -195,6 +203,10 @@ export async function updateOwnerStatus(req, res, next) {
       where: { id },
       data: { status },
     });
+
+    if (status === 'SUSPENDED' && owner.status === 'ACTIVE') {
+      await kickAllActiveSessionsForOwner(id);
+    }
 
     res.json(updated);
   } catch (err) {
@@ -487,6 +499,13 @@ export async function verifyWithdrawalCampay(req, res, next) {
       operator,
       holderName: holder?.full_name || null,
       holderError,
+      campayReference: withdrawal.campayReference,
+      campayTransactionStatus: withdrawal.campayReference
+        ? await campay
+            .getTransactionStatus(withdrawal.campayReference)
+            .then((tx) => normalizeCampayStatus(tx.status))
+            .catch((err) => ({ error: err.message }))
+        : null,
       isDemo: campay.isCampayDemo(),
       isProduction: campay.isCampayProduction(),
       usesPermanentToken: Boolean(process.env.CAMPAY_PERMANENT_ACCESS_TOKEN?.trim()),
@@ -507,6 +526,67 @@ export async function verifyWithdrawalCampay(req, res, next) {
       campayBaseUrl: campay.getCampayBaseUrl(),
       apiWithdrawalHint:
         'If Send MoMo fails with Unauthorized MTN number: enable API withdrawal in app Settings on campay.net, or pay via Campay dashboard Withdraw then Mark paid manually here.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function activateOwner(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const owner = await prisma.owner.findUnique({ where: { id } });
+    if (!owner) {
+      return res.status(404).json({ error: 'Owner not found' });
+    }
+
+    if (owner.status === 'ACTIVE') {
+      return res.json(owner);
+    }
+
+    const updated = await prisma.owner.update({
+      where: { id },
+      data: {
+        status: 'ACTIVE',
+        emailVerified: true,
+        emailVerifyToken: null,
+      },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function reconcilePayment(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const transaction = await prisma.transaction.findUnique({ where: { id } });
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    if (transaction.status === 'SUCCESS') {
+      return res.json({ transaction, message: 'Already successful' });
+    }
+
+    if (!transaction.campayReference) {
+      return res.status(400).json({ error: 'Transaction has no Campay reference' });
+    }
+
+    const campayStatus = await campay.getTransactionStatus(transaction.campayReference);
+    const updated = await processCampayStatus(transaction.campayReference, campayStatus.status);
+
+    res.json({
+      transaction: updated,
+      campayStatus: normalizeCampayStatus(campayStatus.status),
+      message:
+        updated?.status === 'SUCCESS'
+          ? 'Payment recovered and session created'
+          : 'Campay status applied',
     });
   } catch (err) {
     next(err);

@@ -15,9 +15,13 @@ import { resolvePortalBranding, brandingSelectFields } from '../utils/portalBran
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
 import {
   expireStalePendingPayments,
+  findAnyPendingPayment,
   findDevicePendingPayment,
   normalizeCampayStatus,
 } from '../utils/pendingPayment.js';
+import { logMetric } from '../services/walletLedger.js';
+import { notifyPaymentConfirmed } from '../services/whatsappNotify.js';
+import { disconnectDeviceOnly } from '../services/sessionLifecycle.js';
 
 const FEE_PERCENT = Number(process.env.PLATFORM_FEE_PERCENT) || 2;
 
@@ -239,6 +243,18 @@ export async function initiatePayment(req, res, next) {
       return res.status(accessError.status).json({ error: accessError.error });
     }
 
+    if (router.status === 'OFFLINE') {
+      return res.status(503).json({
+        error: 'This hotspot router is offline. Payment is unavailable until the router reconnects.',
+      });
+    }
+
+    if (router.status === 'DEGRADED') {
+      return res.status(503).json({
+        error: 'This hotspot router is having connectivity issues. Payment may be delayed — try again shortly.',
+      });
+    }
+
     const pkg = await prisma.package.findFirst({
       where: { id: packageId, locationId: router.locationId, isActive: true },
     });
@@ -271,13 +287,18 @@ export async function initiatePayment(req, res, next) {
 
     await expireStalePendingPayments(prisma, router.id, trimmedDeviceId);
 
-    const pendingPayment = await findDevicePendingPayment(prisma, router.id, trimmedDeviceId);
+    const pendingPayment = await findAnyPendingPayment(prisma, router.id, {
+      deviceId: trimmedDeviceId,
+      subscriberPhone: localPhone,
+    });
     if (pendingPayment) {
       if (pendingPayment.packageId === pkg.id) {
         return res.json({
           reference: pendingPayment.campayReference,
           resumed: true,
           message: 'Resuming your pending payment. Approve MoMo on your phone.',
+          phone: pendingPayment.subscriberPhone,
+          packageId: pendingPayment.packageId,
         });
       }
 
@@ -459,41 +480,46 @@ export async function redeemVoucher(req, res, next) {
     const now = new Date();
     const sessionEnd = new Date(now.getTime() + voucher.package.durationMinutes * 60 * 1000);
 
-    const locked = await prisma.voucher.findUnique({ where: { id: voucher.id } });
-    if (!locked || (locked.status !== 'UNUSED' && locked.status !== 'REDEEMED')) {
-      return res.status(409).json({ error: 'Voucher is no longer available' });
-    }
+    await prisma.$transaction(
+      async (tx) => {
+        const locked = await tx.voucher.findUnique({ where: { id: voucher.id } });
+        if (!locked || (locked.status !== 'UNUSED' && locked.status !== 'REDEEMED')) {
+          throw Object.assign(new Error('Voucher is no longer available'), { statusCode: 409 });
+        }
 
-    await prisma.transaction.create({
-      data: {
-        ownerId: router.location.ownerId,
-        locationId: router.locationId,
-        routerId: router.id,
-        packageId: voucher.packageId,
-        voucherId: voucher.id,
-        subscriberPhone: 'VOUCHER',
-        subscriberMac: normalizedMac,
-        deviceId: trimmedDeviceId,
-        hotspotUsername,
-        hotspotPin,
-        amountXaf: 0,
-        platformFeeXaf: 0,
-        ownerCreditXaf: 0,
-        status: 'SUCCESS',
-        sessionStart: now,
-        sessionEnd,
-      },
-    });
+        await tx.transaction.create({
+          data: {
+            ownerId: router.location.ownerId,
+            locationId: router.locationId,
+            routerId: router.id,
+            packageId: voucher.packageId,
+            voucherId: voucher.id,
+            subscriberPhone: 'VOUCHER',
+            subscriberMac: normalizedMac,
+            deviceId: trimmedDeviceId,
+            hotspotUsername,
+            hotspotPin,
+            amountXaf: 0,
+            platformFeeXaf: 0,
+            ownerCreditXaf: 0,
+            status: 'SUCCESS',
+            sessionStart: now,
+            sessionEnd,
+          },
+        });
 
-    await prisma.voucher.update({
-      where: { id: voucher.id },
-      data: {
-        status: 'REDEEMED',
-        redeemedAt: locked.redeemedAt ?? now,
-        redeemedMac: normalizedMac ?? locked.redeemedMac,
-        routerId: router.id,
+        await tx.voucher.update({
+          where: { id: voucher.id },
+          data: {
+            status: 'REDEEMED',
+            redeemedAt: locked.redeemedAt ?? now,
+            redeemedMac: normalizedMac ?? locked.redeemedMac,
+            routerId: router.id,
+          },
+        });
       },
-    });
+      { isolationLevel: 'Serializable' }
+    );
 
     await provisionHotspotUser({
       routerId: router.id,
@@ -518,18 +544,49 @@ export async function redeemVoucher(req, res, next) {
   }
 }
 
-async function processCampayStatus(reference, status) {
+export async function processCampayStatus(reference, status) {
   const normalizedStatus = normalizeCampayStatus(status);
   const transaction = await prisma.transaction.findUnique({
     where: { campayReference: reference },
     include: { package: true, location: true },
   });
 
-  if (!transaction || transaction.status !== 'PENDING') {
+  if (!transaction) return null;
+
+  if (transaction.status === 'SUCCESS') {
     return transaction;
   }
 
   if (normalizedStatus === 'SUCCESSFUL') {
+    if (transaction.status === 'FAILED') {
+      const conflict = await prisma.transaction.findFirst({
+        where: {
+          routerId: transaction.routerId,
+          subscriberPhone: transaction.subscriberPhone,
+          status: 'SUCCESS',
+          sessionEnd: { gt: new Date() },
+          id: { not: transaction.id },
+        },
+      });
+      if (conflict) {
+        return transaction;
+      }
+
+      const reopened = await prisma.transaction.updateMany({
+        where: { id: transaction.id, status: 'FAILED' },
+        data: { status: 'PENDING' },
+      });
+      if (reopened.count === 0) {
+        return transaction;
+      }
+      transaction.status = 'PENDING';
+      logMetric('payment_orphan_recovered', { transactionId: transaction.id, reference });
+    }
+
+    if (transaction.status !== 'PENDING') {
+      return transaction;
+    }
+
     await prisma.$transaction(async (tx) => {
       await completePaidSession(tx, {
         transaction,
@@ -538,12 +595,19 @@ async function processCampayStatus(reference, status) {
         location: transaction.location,
       });
     });
-    return prisma.transaction.findFirst({
+
+    const completed = await prisma.transaction.findFirst({
       where: { id: transaction.id },
       include: {
         package: { select: { name: true, type: true, dataCapMb: true, durationMinutes: true } },
       },
     });
+
+    if (completed?.status === 'SUCCESS') {
+      notifyPaymentConfirmed(completed).catch(() => {});
+    }
+
+    return completed;
   }
 
   if (normalizedStatus === 'FAILED') {
@@ -599,6 +663,21 @@ export async function checkPaymentStatus(req, res, next) {
     }
 
     if (transaction.status === 'FAILED') {
+      const campayStatus = await campay.getTransactionStatus(reference.trim());
+      const normalizedStatus = normalizeCampayStatus(campayStatus.status);
+      if (normalizedStatus === 'SUCCESSFUL') {
+        const recovered = await processCampayStatus(reference.trim(), normalizedStatus);
+        if (recovered?.status === 'SUCCESS') {
+          return res.json({
+            status: 'SUCCESS',
+            ...sessionResponse({
+              ...recovered,
+              package: recovered.package ?? transaction.package,
+              sessionEnd: recovered.sessionEnd,
+            }),
+          });
+        }
+      }
       return res.json({ status: 'FAILED', error: 'Payment failed or was declined' });
     }
 
@@ -638,7 +717,7 @@ export async function checkPaymentStatus(req, res, next) {
 export async function getPendingPayment(req, res, next) {
   try {
     const { routerToken } = req.params;
-    const { deviceId } = req.query;
+    const { deviceId, phone } = req.query;
 
     if (!isValidDeviceId(deviceId)) {
       return res.status(400).json({ error: 'deviceId is required' });
@@ -653,9 +732,13 @@ export async function getPendingPayment(req, res, next) {
     }
 
     const trimmedDeviceId = deviceId.trim();
+    const localPhone = normalizeCameroonMobileLocal(phone);
     await expireStalePendingPayments(prisma, router.id, trimmedDeviceId);
 
-    const pending = await findDevicePendingPayment(prisma, router.id, trimmedDeviceId);
+    const pending = await findAnyPendingPayment(prisma, router.id, {
+      deviceId: trimmedDeviceId,
+      subscriberPhone: localPhone,
+    });
     if (!pending?.campayReference) {
       return res.json({ pending: false });
     }
@@ -733,12 +816,72 @@ export async function cancelPendingPayment(req, res, next) {
       return res.json({ cancelled: true });
     }
 
-    await prisma.transaction.update({
-      where: { id: pending.id },
+    if (pending.campayReference) {
+      try {
+        const campayStatus = await campay.getTransactionStatus(pending.campayReference);
+        const normalizedStatus = normalizeCampayStatus(campayStatus.status);
+        if (normalizedStatus === 'SUCCESSFUL') {
+          const recovered = await processCampayStatus(pending.campayReference, normalizedStatus);
+          if (recovered?.status === 'SUCCESS') {
+            return res.json({
+              cancelled: false,
+              recovered: true,
+              session: sessionResponse({
+                ...recovered,
+                package: recovered.package,
+                sessionEnd: recovered.sessionEnd,
+              }),
+            });
+          }
+        }
+      } catch {
+        // Proceed with local cancel if Campay is unreachable.
+      }
+    }
+
+    await prisma.transaction.updateMany({
+      where: { id: pending.id, status: 'PENDING' },
       data: { status: 'FAILED' },
     });
 
     res.json({ cancelled: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function disconnectDevice(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const { deviceId, mac, phone } = req.body;
+
+    if (!isValidDeviceId(deviceId)) {
+      return res.status(400).json({ error: 'deviceId is required' });
+    }
+
+    const router = await prisma.router.findFirst({
+      where: { routerToken, isActive: true },
+    });
+
+    if (!router) {
+      return res.status(404).json({ error: 'Router not found' });
+    }
+
+    const normalizedMac = normalizeMac(mac);
+    const localPhone = normalizeCameroonMobileLocal(phone);
+    const session = await findActiveSession(router.id, {
+      deviceId: deviceId.trim(),
+      phone: localPhone,
+      mac: normalizedMac,
+    });
+
+    if (!session) {
+      return res.json({ message: 'No active session', active: false });
+    }
+
+    await disconnectDeviceOnly(session, normalizedMac);
+
+    res.json({ message: 'Device disconnected', active: false });
   } catch (err) {
     next(err);
   }

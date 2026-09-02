@@ -293,22 +293,27 @@ export async function routerHeartbeat(req, res, next) {
 
 export async function getRouterCommands(req, res, next) {
   try {
-    const commands = await prisma.routerCommand.findMany({
-      where: { routerId: req.router.id, executed: false },
-      orderBy: { createdAt: 'asc' },
-    });
-
+    const { fetchPendingCommands } = await import('../services/routerCommandService.js');
+    const commands = await fetchPendingCommands(req.router.id);
     const script = buildCommandsRouterOs(commands);
-
-    if (commands.length > 0) {
-      await prisma.routerCommand.updateMany({
-        where: { id: { in: commands.map((c) => c.id) } },
-        data: { executed: true },
-      });
-    }
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.send(script);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function ackRouterCommands(req, res, next) {
+  try {
+    const { acknowledgeCommands } = await import('../services/routerCommandService.js');
+    const { success = true, error, commandIds } = req.body ?? {};
+    const count = await acknowledgeCommands(req.router.id, {
+      success: Boolean(success),
+      error,
+      commandIds: Array.isArray(commandIds) ? commandIds : undefined,
+    });
+    res.json({ acknowledged: count });
   } catch (err) {
     next(err);
   }

@@ -12,10 +12,16 @@ import portalRoutes from './routes/portal.js';
 import routerRoutes from './routes/router.js';
 import adminRoutes from './routes/admin.js';
 import { campayWebhook } from './controllers/portalController.js';
+import { openwaWebhook } from './controllers/openwaWebhookController.js';
 import { serveOwnerLogo } from './controllers/mediaController.js';
 import logger from './utils/logger.js';
 import { runRouterHealthJob } from './services/routerHealth.js';
 import { getStorageMode, isR2Configured } from './services/objectStorage.js';
+import { assertProductionEnv } from './utils/env.js';
+import { reconcilePendingWithdrawals } from './services/reconcileWithdrawals.js';
+import { runSessionNotificationJob } from './services/sessionNotifications.js';
+
+assertProductionEnv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -36,15 +42,30 @@ const corsOrigin = (origin, callback) => {
 };
 
 app.use(cors({ origin: corsOrigin, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({
+  limit: '2mb',
+  verify: (req, _res, buf) => {
+    if (req.originalUrl?.startsWith('/webhooks/openwa')) {
+      req.rawBody = Buffer.from(buf);
+    }
+  },
+}));
 
-const limiter = rateLimit({
+const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/portal') || req.path.startsWith('/api/router'),
 });
-app.use(limiter);
+app.use(globalLimiter);
+
+const portalPayLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 app.use('/uploads', express.static(uploadsDir));
 
@@ -56,10 +77,13 @@ app.get('/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/owner', ownerRoutes);
+app.use('/portal/:routerToken/pay', portalPayLimiter);
+app.use('/portal/:routerToken/redeem', portalPayLimiter);
 app.use('/portal', portalRoutes);
 app.use('/api/router', routerRoutes);
 app.use('/api/admin', adminRoutes);
 app.post('/webhooks/campay', campayWebhook);
+app.post('/webhooks/openwa', openwaWebhook);
 
 if (process.env.NODE_ENV === 'production') {
   const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -89,4 +113,14 @@ app.listen(PORT, () => {
       logger.warn('Router health job failed', { error: err.message });
     });
   }, 2 * 60 * 1000);
+  setInterval(() => {
+    reconcilePendingWithdrawals().catch((err) => {
+      logger.warn('Withdrawal reconciliation failed', { error: err.message });
+    });
+  }, 5 * 60 * 1000);
+  setInterval(() => {
+    runSessionNotificationJob().catch((err) => {
+      logger.warn('Session notification job failed', { error: err.message });
+    });
+  }, 5 * 60 * 1000);
 });

@@ -65,3 +65,9 @@ export function toCampayPhone(phone) {
   const local = normalizeCameroonMobileLocal(phone);
   return local ? `237${local}` : null;
 }
+
+/** OpenWA / WhatsApp chat id: 2376XXXXXXXX@c.us */
+export function toWhatsAppChatId(phone) {
+  const campay = toCampayPhone(phone);
+  return campay ? `${campay}@c.us` : null;
+}

@@ -1,6 +1,8 @@
 import * as mikrotik from './mikrotik.js';
 import { generateHotspotPin, normalizeHotspotUsername } from '../utils/hotspotCredentials.js';
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
+import { recordLedgerEntry } from './walletLedger.js';
+import { logMetric } from './walletLedger.js';
 
 export async function completePaidSession(tx, { transaction, pkg, routerId, location }) {
   const now = new Date();
@@ -30,6 +32,14 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
   await tx.owner.update({
     where: { id: transaction.ownerId },
     data: { walletBalance: { increment: transaction.ownerCreditXaf } },
+  });
+
+  await recordLedgerEntry(tx, {
+    ownerId: transaction.ownerId,
+    type: 'PAYMENT_CREDIT',
+    amountXaf: transaction.ownerCreditXaf,
+    referenceId: transaction.id,
+    note: `Payment ${transaction.campayReference || transaction.id}`,
   });
 
   const access = resolvePackageAccessLimits(pkg);

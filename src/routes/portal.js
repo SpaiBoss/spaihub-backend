@@ -7,6 +7,7 @@ import {
   checkPaymentStatus,
   getPendingPayment,
   cancelPendingPayment,
+  disconnectDevice,
   initiatePayment,
   redeemVoucher,
 } from '../controllers/portalController.js';
@@ -17,6 +18,7 @@ router.get('/:routerToken/mikrotik-login.html', getMikrotikLoginHtml);
 router.get('/:routerToken', getPortal);
 router.get('/:routerToken/session', checkSession);
 router.post('/:routerToken/logout', logoutSession);
+router.post('/:routerToken/disconnect-device', disconnectDevice);
 router.get('/:routerToken/payment-status', checkPaymentStatus);
 router.get('/:routerToken/pending-payment', getPendingPayment);
 router.post('/:routerToken/cancel-payment', cancelPendingPayment);

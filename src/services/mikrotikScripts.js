@@ -50,14 +50,45 @@ export function buildPreviewPortalUrl(routerToken) {
 }
 
 export function commandToRouterOs(cmd) {
-  const username = cmd.payload?.username;
-  const password = cmd.payload?.password;
+  if (cmd.type === 'UPDATE_ACCESS_POLICY') {
+    const enableAntiTethering = Boolean(cmd.payload?.enableAntiTethering);
+    return [
+      `# SpaiHub UPDATE_ACCESS_POLICY ${cmd.id}`,
+      buildAntiTetheringLines(enableAntiTethering),
+    ].join('\n');
+  }
 
-  if (!username || !password) {
-    return `# SpaiHub: missing username/password for command ${cmd.id}`;
+  const username = cmd.payload?.username;
+  if (!username) {
+    return `# SpaiHub: missing username for command ${cmd.id}`;
   }
 
   const safeUsername = escapeRouterOsString(username);
+
+  if (cmd.type === 'KICK_USER') {
+    const macAddress = cmd.payload?.macAddress;
+    const safeMac = macAddress ? escapeRouterOsString(macAddress) : null;
+    const lines = [
+      `# SpaiHub KICK_USER ${cmd.id}`,
+      `:local username "${safeUsername}"`,
+      `/ip hotspot active remove [find user=$username]`,
+      `/ip hotspot cookie remove [find user=$username]`,
+    ];
+
+    if (safeMac) {
+      lines.push(`/ip hotspot active remove [find mac-address="${safeMac}"]`);
+      lines.push(`/ip hotspot cookie remove [find mac-address="${safeMac}"]`);
+    }
+
+    lines.push(`/ip hotspot user remove [find name=$username comment~"spaihub"]`);
+    return lines.join('\n');
+  }
+
+  const password = cmd.payload?.password;
+  if (!password) {
+    return `# SpaiHub: missing password for command ${cmd.id}`;
+  }
+
   const safePassword = escapeRouterOsString(password);
 
   if (cmd.type === 'GRANT_ACCESS') {
@@ -89,25 +120,6 @@ export function commandToRouterOs(cmd) {
     ].join('\n');
   }
 
-  if (cmd.type === 'KICK_USER') {
-    const macAddress = cmd.payload?.macAddress;
-    const safeMac = macAddress ? escapeRouterOsString(macAddress) : null;
-    const lines = [
-      `# SpaiHub KICK_USER ${cmd.id}`,
-      `:local username "${safeUsername}"`,
-      `/ip hotspot active remove [find user=$username]`,
-      `/ip hotspot cookie remove [find user=$username]`,
-    ];
-
-    if (safeMac) {
-      lines.push(`/ip hotspot active remove [find mac-address="${safeMac}"]`);
-      lines.push(`/ip hotspot cookie remove [find mac-address="${safeMac}"]`);
-    }
-
-    lines.push(`/ip hotspot user remove [find name=$username comment~"spaihub"]`);
-    return lines.join('\n');
-  }
-
   return `# SpaiHub: unsupported command type ${cmd.type}`;
 }
 
@@ -135,9 +147,11 @@ export function buildConnectionScript(routerToken) {
 /system scheduler add name=spaihub-commands interval=15s on-event={
 :local token "${routerToken}"
 :local api "${API_BASE}/api/router/commands"
+:local ackUrl "${API_BASE}/api/router/commands/ack"
 /tool fetch url=$api http-method=get http-header-field="X-Router-Token: $token" mode=${mode} dst-path=spaihub-cmd.rsc
 :if ([:len [/file find name=spaihub-cmd.rsc]] > 0) do={
   /import file-name=spaihub-cmd.rsc
+  /tool fetch url=$ackUrl http-method=post http-header-field="X-Router-Token: $token" http-header-field="Content-Type: application/json" http-data="{\\"success\\":true}" mode=${mode} keep-result=no
   /file remove spaihub-cmd.rsc
 }
 }`;

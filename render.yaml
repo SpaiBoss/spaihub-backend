@@ -53,3 +53,11 @@ services:
         sync: false
       - key: R2_PUBLIC_URL
         sync: false
+      - key: OPENWA_BASE_URL
+        sync: false
+      - key: OPENWA_API_KEY
+        sync: false
+      - key: OPENWA_SESSION_ID
+        sync: false
+      - key: OPENWA_WEBHOOK_SECRET
+        sync: false

@@ -35,3 +35,30 @@ export function findDevicePendingPayment(prisma, routerId, deviceId) {
     },
   });
 }
+
+export function findPhonePendingPayment(prisma, routerId, subscriberPhone) {
+  if (!subscriberPhone || subscriberPhone === 'VOUCHER') return null;
+  return prisma.transaction.findFirst({
+    where: {
+      routerId,
+      subscriberPhone,
+      status: 'PENDING',
+      campayReference: { not: null },
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      package: { select: { id: true, name: true, type: true, dataCapMb: true, durationMinutes: true } },
+    },
+  });
+}
+
+export async function findAnyPendingPayment(prisma, routerId, { deviceId, subscriberPhone }) {
+  if (deviceId) {
+    const byDevice = await findDevicePendingPayment(prisma, routerId, deviceId);
+    if (byDevice) return byDevice;
+  }
+  if (subscriberPhone) {
+    return findPhonePendingPayment(prisma, routerId, subscriberPhone);
+  }
+  return null;
+}

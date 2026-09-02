@@ -3,6 +3,7 @@ import prisma from '../utils/prisma.js';
 import { buildVouchersPdf, PDF_LAYOUTS } from '../services/voucherPdf.js';
 import { generateHotspotPin } from '../utils/hotspotCredentials.js';
 import { brandingSelectFields, resolvePortalBranding } from '../utils/portalBranding.js';
+import { endHotspotSession } from '../services/sessionLifecycle.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -142,16 +143,38 @@ export async function revokeVoucher(req, res, next) {
     if (!voucher) {
       return res.status(404).json({ error: 'Voucher not found' });
     }
-    if (voucher.status !== 'UNUSED') {
-      return res.status(400).json({ error: 'Only unused vouchers can be revoked' });
+    if (voucher.status !== 'UNUSED' && voucher.status !== 'REDEEMED') {
+      return res.status(400).json({ error: 'Only unused or redeemed vouchers can be revoked' });
     }
+
+    const activeSessions =
+      voucher.status === 'REDEEMED'
+        ? await prisma.transaction.findMany({
+            where: {
+              voucherId: voucher.id,
+              status: 'SUCCESS',
+              sessionEnd: { gt: new Date() },
+            },
+            select: {
+              id: true,
+              routerId: true,
+              hotspotUsername: true,
+              subscriberMac: true,
+              sessionEnd: true,
+            },
+          })
+        : [];
 
     const updated = await prisma.voucher.update({
       where: { id },
       data: { status: 'REVOKED' },
     });
 
-    res.json(updated);
+    for (const session of activeSessions) {
+      await endHotspotSession(session);
+    }
+
+    res.json({ ...updated, sessionsEnded: activeSessions.length });
   } catch (err) {
     next(err);
   }
@@ -203,8 +226,10 @@ export async function exportVouchers(req, res, next) {
 
 export async function exportVouchersPdf(req, res, next) {
   try {
-    const { locationId, status, batchLabel, perPage = '6' } = req.query;
+    const { locationId, status, batchLabel, perPage = '6', page = '1' } = req.query;
     const perPageNum = Number(perPage);
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const PDF_BATCH_SIZE = 500;
 
     if (!PDF_LAYOUTS[perPageNum]) {
       return res.status(400).json({
@@ -219,17 +244,21 @@ export async function exportVouchersPdf(req, res, next) {
     if (status) where.status = status;
     if (batchLabel) where.batchLabel = batchLabel;
 
-    const vouchers = await prisma.voucher.findMany({
-      where,
-      include: {
-        location: { select: { name: true } },
-        package: {
-          select: { name: true, type: true, durationMinutes: true, dataCapMb: true },
+    const [vouchers, total] = await Promise.all([
+      prisma.voucher.findMany({
+        where,
+        include: {
+          location: { select: { name: true } },
+          package: {
+            select: { name: true, type: true, durationMinutes: true, dataCapMb: true },
+          },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    });
+        orderBy: { createdAt: 'desc' },
+        skip: (pageNum - 1) * PDF_BATCH_SIZE,
+        take: PDF_BATCH_SIZE,
+      }),
+      prisma.voucher.count({ where }),
+    ]);
 
     const owner = await prisma.owner.findUnique({
       where: { id: req.owner.id },
@@ -241,10 +270,13 @@ export async function exportVouchersPdf(req, res, next) {
     const brandSlug = branding.brandName
       ? branding.brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)
       : 'vouchers';
-    const filename = `${brandSlug}-${perPageNum}up.pdf`;
+    const filename = `${brandSlug}-${perPageNum}up-p${pageNum}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('X-Voucher-Total', String(total));
+    res.setHeader('X-Voucher-Page', String(pageNum));
+    res.setHeader('X-Voucher-Pages', String(Math.ceil(total / PDF_BATCH_SIZE) || 1));
     res.send(pdf);
   } catch (err) {
     next(err);

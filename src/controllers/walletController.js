@@ -11,6 +11,7 @@ import {
   holdWithdrawalForAdminRetry,
   isAutoDisburseEnabled,
 } from '../services/withdrawalDisbursement.js';
+import { recordLedgerEntry } from '../services/walletLedger.js';
 
 const MIN_WITHDRAWAL = 100;
 
@@ -123,7 +124,7 @@ export async function requestWithdrawal(req, res, next) {
           throw Object.assign(new Error('Insufficient wallet balance'), { statusCode: 400 });
         }
 
-        return tx.withdrawal.create({
+        const created = await tx.withdrawal.create({
           data: {
             ownerId: req.owner.id,
             amountXaf: Number(amountXaf),
@@ -133,6 +134,16 @@ export async function requestWithdrawal(req, res, next) {
             ...(idempotencyKey ? { idempotencyKey } : {}),
           },
         });
+
+        await recordLedgerEntry(tx, {
+          ownerId: req.owner.id,
+          type: 'WITHDRAWAL_DEBIT',
+          amountXaf: -Number(amountXaf),
+          referenceId: created.id,
+          note: `Withdrawal request to ${localPhone}`,
+        });
+
+        return created;
       });
     } catch (err) {
       if (err.code === 'P2002' && idempotencyKey) {

@@ -27,6 +27,7 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
         type: true,
         dataCapMb: true,
         durationMinutes: true,
+        maxSharedDevices: true,
       },
     },
   };
@@ -101,6 +102,7 @@ export async function syncSessionIdentity(session, { deviceId, mac } = {}) {
           type: true,
           dataCapMb: true,
           durationMinutes: true,
+          maxSharedDevices: true,
         },
       },
     },
@@ -115,6 +117,7 @@ export function sessionResponse(session) {
     sessionEnd: session.sessionEnd,
     packageName: session.package.name,
     packageType: access.packageType,
+    maxSharedDevices: session.package.maxSharedDevices ?? 1,
     dataCapMb:
       access.packageType === 'DATA_BASED' && access.applyByteLimit ? access.dataCapMb : null,
     durationMinutes: session.package.durationMinutes,

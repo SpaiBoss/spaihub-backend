@@ -52,6 +52,15 @@ enum VoucherStatus {
 enum RouterCommandType {
   GRANT_ACCESS
   KICK_USER
+  UPDATE_ACCESS_POLICY
+}
+
+enum RouterCommandStatus {
+  PENDING
+  DISPATCHED
+  ACKNOWLEDGED
+  FAILED
+  DEAD_LETTER
 }
 
 enum DeploymentType {
@@ -69,6 +78,13 @@ enum WhatsappNotificationStatus {
   PENDING
   SENT
   FAILED
+}
+
+enum WalletLedgerType {
+  PAYMENT_CREDIT
+  WITHDRAWAL_DEBIT
+  WITHDRAWAL_REFUND
+  ADMIN_ADJUSTMENT
 }
 
 model Owner {
@@ -94,6 +110,7 @@ model Owner {
   locations    Location[]
   transactions Transaction[]
   withdrawals  Withdrawal[]
+  ledgerEntries WalletLedgerEntry[]
 }
 
 model Location {
@@ -174,6 +191,7 @@ model Transaction {
   status           TransactionStatus @default(PENDING)
   sessionStart     DateTime?
   sessionEnd       DateTime?
+  kickedAt         DateTime?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -228,6 +246,21 @@ model Withdrawal {
   owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 }
 
+model WalletLedgerEntry {
+  id              String           @id @default(uuid())
+  ownerId         String
+  type            WalletLedgerType
+  amountXaf       Int
+  balanceAfterXaf Decimal          @db.Decimal(12, 2)
+  referenceId     String?
+  note            String?
+  createdAt       DateTime         @default(now())
+
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, createdAt])
+}
+
 model Admin {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -236,14 +269,23 @@ model Admin {
 }
 
 model RouterCommand {
-  id        String            @id @default(uuid())
-  routerId  String
-  type      RouterCommandType
-  payload   Json
-  executed  Boolean           @default(false)
-  createdAt DateTime          @default(now())
+  id              String              @id @default(uuid())
+  routerId        String
+  type            RouterCommandType
+  payload         Json
+  status          RouterCommandStatus @default(PENDING)
+  executed        Boolean             @default(false)
+  attempts        Int                 @default(0)
+  dispatchedAt    DateTime?
+  acknowledgedAt  DateTime?
+  lastError       String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   router Router @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@index([routerId, status])
+  @@index([status, createdAt])
 }
 
 model Voucher {

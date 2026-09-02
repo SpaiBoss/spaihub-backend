@@ -10,6 +10,8 @@ import {
   getWithdrawals,
   processWithdrawal,
   verifyWithdrawalCampay,
+  activateOwner,
+  reconcilePayment,
 } from '../controllers/adminController.js';
 import { exportAdminAccountingReport } from '../controllers/reportsController.js';
 
@@ -21,7 +23,9 @@ router.get('/stats', getPlatformStats);
 router.get('/stats/revenue-chart', getPlatformRevenueChart);
 router.get('/owners', getOwners);
 router.patch('/owners/:id/status', updateOwnerStatus);
+router.post('/owners/:id/activate', activateOwner);
 router.get('/transactions', getAllTransactions);
+router.post('/transactions/:id/reconcile', reconcilePayment);
 router.get('/transactions/export', exportAdminTransactions);
 router.get('/reports/accounting', exportAdminAccountingReport);
 router.get('/withdrawals', getWithdrawals);

@@ -1,5 +1,7 @@
 import prisma from '../utils/prisma.js';
 import { parseAccessPolicyInput } from '../services/accessPolicy.js';
+import { kickAllActiveSessionsForLocation } from '../services/sessionLifecycle.js';
+import { queueAccessPolicyUpdate } from '../services/mikrotik.js';
 
 async function getActiveSessionCount(locationId) {
   const now = new Date();
@@ -82,6 +84,7 @@ export async function updateLocation(req, res, next) {
       return res.status(400).json({ error: policy.error });
     }
 
+    const wasActive = location.isActive;
     const updated = await prisma.location.update({
       where: { id },
       data: {
@@ -91,6 +94,14 @@ export async function updateLocation(req, res, next) {
         ...policy.data,
       },
     });
+
+    if (isActive === false && wasActive) {
+      await kickAllActiveSessionsForLocation(id);
+    }
+
+    if (Object.keys(policy.data).length > 0) {
+      await queueAccessPolicyUpdate(id, updated);
+    }
 
     res.json(updated);
   } catch (err) {

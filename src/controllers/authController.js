@@ -200,3 +200,40 @@ export async function resetPassword(req, res, next) {
     next(err);
   }
 }
+
+export async function resendVerification(req, res, next) {
+  try {
+    const { email } = req.body;
+
+    if (!email?.trim()) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address' });
+    }
+
+    const owner = await prisma.owner.findUnique({ where: { email: normalizeEmail(email) } });
+
+    if (owner && owner.status === 'PENDING') {
+      let token = owner.emailVerifyToken;
+      if (!token) {
+        token = uuidv4();
+        await prisma.owner.update({
+          where: { id: owner.id },
+          data: { emailVerifyToken: token },
+        });
+      }
+
+      try {
+        await sendVerificationEmail(owner.email, token);
+      } catch {
+        // Do not reveal delivery failures
+      }
+    }
+
+    res.json({ message: 'If your account is pending verification, a new email has been sent.' });
+  } catch (err) {
+    next(err);
+  }
+}

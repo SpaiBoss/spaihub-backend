@@ -1,6 +1,7 @@
 import prisma from '../utils/prisma.js';
 import * as campay from './campay.js';
 import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
+import { recordLedgerEntry } from './walletLedger.js';
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_ATTEMPTS = 30;
@@ -219,6 +220,14 @@ export async function failWithdrawalAndRefund(withdrawal, reason) {
     await tx.owner.update({
       where: { id: withdrawal.ownerId },
       data: { walletBalance: { increment: withdrawal.amountXaf } },
+    });
+
+    await recordLedgerEntry(tx, {
+      ownerId: withdrawal.ownerId,
+      type: 'WITHDRAWAL_REFUND',
+      amountXaf: withdrawal.amountXaf,
+      referenceId: withdrawal.id,
+      note: reason,
     });
   });
 }

@@ -2,7 +2,7 @@ import prisma from '../utils/prisma.js';
 import * as campay from '../services/campay.js';
 import * as mikrotik from '../services/mikrotik.js';
 import { completePaidSession } from '../services/session.js';
-import { findActiveSession, sessionResponse } from '../services/portalSession.js';
+import { findActiveSession, sessionResponse, syncSessionIdentity } from '../services/portalSession.js';
 import { endHotspotSession } from '../services/sessionLifecycle.js';
 import { buildMikrotikLoginHtml } from '../services/mikrotikScripts.js';
 import { isValidDeviceId, normalizeMac } from '../utils/deviceId.js';
@@ -135,7 +135,7 @@ export async function getMikrotikLoginHtml(req, res, next) {
 export async function checkSession(req, res, next) {
   try {
     const { routerToken } = req.params;
-    const { deviceId, mac } = req.query;
+    const { deviceId, mac, phone } = req.query;
 
     if (!isValidDeviceId(deviceId)) {
       return res.status(400).json({ error: 'deviceId is required' });
@@ -150,8 +150,10 @@ export async function checkSession(req, res, next) {
     }
 
     const normalizedMac = normalizeMac(mac);
+    const localPhone = normalizeCameroonMobileLocal(phone);
     const session = await findActiveSession(router.id, {
       deviceId: deviceId.trim(),
+      phone: localPhone,
       mac: normalizedMac,
     });
 
@@ -159,14 +161,12 @@ export async function checkSession(req, res, next) {
       return res.json({ active: false });
     }
 
-    if (normalizedMac && normalizedMac !== session.subscriberMac) {
-      await prisma.transaction.update({
-        where: { id: session.id },
-        data: { subscriberMac: normalizedMac },
-      });
-    }
+    const synced = await syncSessionIdentity(session, {
+      deviceId: deviceId.trim(),
+      mac: normalizedMac,
+    });
 
-    res.json(sessionResponse(session));
+    res.json(sessionResponse(synced));
   } catch (err) {
     next(err);
   }
@@ -175,7 +175,7 @@ export async function checkSession(req, res, next) {
 export async function logoutSession(req, res, next) {
   try {
     const { routerToken } = req.params;
-    const { deviceId, mac } = req.body;
+    const { deviceId, mac, phone } = req.body;
 
     if (!isValidDeviceId(deviceId)) {
       return res.status(400).json({ error: 'deviceId is required' });
@@ -190,8 +190,10 @@ export async function logoutSession(req, res, next) {
     }
 
     const normalizedMac = normalizeMac(mac);
+    const localPhone = normalizeCameroonMobileLocal(phone);
     const session = await findActiveSession(router.id, {
       deviceId: deviceId.trim(),
+      phone: localPhone,
       mac: normalizedMac,
     });
 
@@ -246,16 +248,24 @@ export async function initiatePayment(req, res, next) {
     }
 
     const trimmedDeviceId = deviceId.trim();
-    const activeSession = await findActiveSession(router.id, { deviceId: trimmedDeviceId });
+    const activeSession = await findActiveSession(router.id, {
+      deviceId: trimmedDeviceId,
+      phone: localPhone,
+      mac: normalizedMac,
+    });
     if (activeSession) {
-      return res.status(409).json({ error: 'You already have an active session on this network.' });
-    }
-
-    const activeForPhone = await findActiveSession(router.id, { phone: localPhone });
-    if (activeForPhone) {
+      const synced = await syncSessionIdentity(activeSession, {
+        deviceId: trimmedDeviceId,
+        mac: normalizedMac,
+      });
+      const recoveredByPhone =
+        activeSession.subscriberPhone === localPhone && activeSession.deviceId !== trimmedDeviceId;
       return res.status(409).json({
-        error:
-          'This number already has an active WiFi session. Share your username and PIN with other devices, or wait until it expires.',
+        error: recoveredByPhone
+          ? 'This number already has an active WiFi session. Your credentials are shown below — use Connect to WiFi if you were disconnected.'
+          : 'You already have an active session on this network.',
+        recoverSession: true,
+        ...sessionResponse(synced),
       });
     }
 
@@ -415,16 +425,31 @@ export async function redeemVoucher(req, res, next) {
 
     if (isExistingDevice) {
       const existingSession = activeSessions.find((session) => session.deviceId === trimmedDeviceId);
-      if (normalizedMac && normalizedMac !== existingSession.subscriberMac) {
-        await prisma.transaction.update({
-          where: { id: existingSession.id },
-          data: { subscriberMac: normalizedMac },
-        });
-      }
+      const synced = await syncSessionIdentity(existingSession, {
+        deviceId: trimmedDeviceId,
+        mac: normalizedMac,
+      });
 
       return res.json({
         message: 'Already connected',
-        sessionEnd: existingSession.sessionEnd,
+        sessionEnd: synced.sessionEnd,
+        packageName: voucher.package.name,
+        hotspotUsername,
+        hotspotPin,
+      });
+    }
+
+    const sessionByMac =
+      normalizedMac && activeSessions.find((session) => session.subscriberMac === normalizedMac);
+    if (sessionByMac) {
+      const synced = await syncSessionIdentity(sessionByMac, {
+        deviceId: trimmedDeviceId,
+        mac: normalizedMac,
+      });
+
+      return res.json({
+        message: 'Already connected',
+        sessionEnd: synced.sessionEnd,
         packageName: voucher.package.name,
         hotspotUsername,
         hotspotPin,

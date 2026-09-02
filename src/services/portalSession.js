@@ -1,5 +1,7 @@
 import prisma from '../utils/prisma.js';
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
+import { normalizeMac } from '../utils/deviceId.js';
+import { normalizeCameroonMobileLocal } from '../utils/phone.js';
 
 export async function findActiveSession(routerId, { deviceId, phone, mac }) {
   const now = new Date();
@@ -38,24 +40,71 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
     if (byDevice) return byDevice;
   }
 
-  if (phone && phone !== 'VOUCHER') {
+  const normalizedPhone = phone && phone !== 'VOUCHER' ? normalizeCameroonMobileLocal(phone) : null;
+
+  if (normalizedPhone) {
     const byPhone = await prisma.transaction.findFirst({
-      where: { ...baseWhere, subscriberPhone: phone },
+      where: { ...baseWhere, subscriberPhone: normalizedPhone },
       select: sessionSelect,
       orderBy: { sessionEnd: 'desc' },
     });
     if (byPhone) return byPhone;
   }
 
-  if (mac) {
+  const normalizedMac = mac ? normalizeMac(mac) : null;
+  if (normalizedMac) {
     return prisma.transaction.findFirst({
-      where: { ...baseWhere, subscriberMac: mac },
+      where: { ...baseWhere, subscriberMac: normalizedMac },
       select: sessionSelect,
       orderBy: { sessionEnd: 'desc' },
     });
   }
 
   return null;
+}
+
+/** Keep portal device id and MAC in sync when phones rotate MAC addresses or browsers reset storage. */
+export async function syncSessionIdentity(session, { deviceId, mac } = {}) {
+  if (!session?.id) return session;
+
+  const nextDeviceId = deviceId?.trim() || null;
+  const nextMac = mac ? normalizeMac(mac) : null;
+  const updates = {};
+
+  if (nextDeviceId && nextDeviceId !== session.deviceId) {
+    updates.deviceId = nextDeviceId;
+  }
+  if (nextMac && nextMac !== session.subscriberMac) {
+    updates.subscriberMac = nextMac;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return session;
+  }
+
+  return prisma.transaction.update({
+    where: { id: session.id },
+    data: updates,
+    select: {
+      id: true,
+      deviceId: true,
+      sessionEnd: true,
+      sessionStart: true,
+      subscriberMac: true,
+      subscriberPhone: true,
+      routerId: true,
+      hotspotUsername: true,
+      hotspotPin: true,
+      package: {
+        select: {
+          name: true,
+          type: true,
+          dataCapMb: true,
+          durationMinutes: true,
+        },
+      },
+    },
+  });
 }
 
 export function sessionResponse(session) {

@@ -66,7 +66,8 @@ export function sessionResponse(session) {
     sessionEnd: session.sessionEnd,
     packageName: session.package.name,
     packageType: access.packageType,
-    dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
+    dataCapMb:
+      access.packageType === 'DATA_BASED' && access.applyByteLimit ? access.dataCapMb : null,
     durationMinutes: session.package.durationMinutes,
     hotspotUsername: session.hotspotUsername,
     hotspotPin: session.hotspotPin,

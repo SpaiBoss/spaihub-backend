@@ -87,8 +87,14 @@ export async function getPortal(req, res, next) {
 
     const branding = resolvePortalBranding(router.location.owner, req);
     const packages = router.location.packages.map((pkg) => {
-      if (branding.showUploadSpeed) return pkg;
-      const { uploadSpeedMbPerSec, ...publicPkg } = pkg;
+      const { uploadSpeedMbPerSec, dataCapMb, ...rest } = pkg;
+      const publicPkg =
+        pkg.type === 'TIME_BASED'
+          ? { ...rest, type: pkg.type }
+          : { ...rest, type: pkg.type, dataCapMb };
+      if (branding.showUploadSpeed) {
+        return { ...publicPkg, uploadSpeedMbPerSec };
+      }
       return publicPkg;
     });
 

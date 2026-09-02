@@ -44,12 +44,7 @@ function formatPackageLine(pkg) {
     return `${cap} data · ${formatDuration(pkg.durationMinutes)} validity`;
   }
   const browse = formatDuration(pkg.durationMinutes);
-  const cap = pkg.dataCapMb
-    ? pkg.dataCapMb >= 1024
-      ? `${(pkg.dataCapMb / 1024).toFixed(0)} GB cap`
-      : `${pkg.dataCapMb} MB cap`
-    : 'Unlimited data';
-  return `${browse} · ${cap}`;
+  return `${browse} · Unlimited data`;
 }
 
 function localLogoPath(logoUrl) {

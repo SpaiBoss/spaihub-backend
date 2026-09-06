@@ -22,8 +22,7 @@ import {
 import { logMetric } from '../services/walletLedger.js';
 import { notifyPaymentConfirmed } from '../services/whatsappNotify.js';
 import { disconnectDeviceOnly } from '../services/sessionLifecycle.js';
-
-const FEE_PERCENT = Number(process.env.PLATFORM_FEE_PERCENT) || 2;
+import { getPlatformFeePercent } from '../utils/platformConfig.js';
 
 function portalAccessError(router) {
   if (!router) {
@@ -308,7 +307,7 @@ export async function initiatePayment(req, res, next) {
       });
     }
 
-    const platformFeeXaf = Math.floor(pkg.priceXaf * (FEE_PERCENT / 100));
+    const platformFeeXaf = Math.floor(pkg.priceXaf * (getPlatformFeePercent() / 100));
     const ownerCreditXaf = pkg.priceXaf - platformFeeXaf;
 
     const transaction = await prisma.transaction.create({

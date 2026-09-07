@@ -192,17 +192,39 @@ function buildAntiTetheringLines(enableAntiTethering) {
 /** Captive-portal redirect page for MikroTik html-directory (RouterOS has no login-url property). */
 export function buildMikrotikLoginHtml(routerToken) {
   const portalUrl = buildPortalUrl(routerToken);
-  return `<html>
+  // Keep MikroTik $(mac)/$(link-*) vars literal for RouterOS substitution.
+  return `<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta http-equiv="refresh" content="0; url=${portalUrl}">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="pragma" content="no-cache">
 <meta http-equiv="expires" content="-1">
-<script>
-  window.location.href="${portalUrl}";
-</script>
+<title>SpaiHub</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0E141B;color:#fff;padding:1.5rem;text-align:center}
+  h1{font-size:1.35rem;margin:0;font-weight:700;letter-spacing:-0.02em}
+  p{margin:0.5rem 0 0;opacity:0.7;font-size:0.9rem}
+  a{display:inline-block;margin-top:1.25rem;padding:0.85rem 1.5rem;background:#0F766E;color:#fff;
+    text-decoration:none;border-radius:0.5rem;font-weight:600;font-size:1rem}
+</style>
 </head>
 <body>
-  <a href="${portalUrl}">Continue to SpaiHub</a>
+  <div>
+    <h1>SpaiHub</h1>
+    <p>Continue to pay or redeem access</p>
+    <a id="continue" href="${portalUrl}">Continue</a>
+  </div>
+  <script>
+    (function () {
+      var u = document.getElementById("continue").href;
+      try { location.replace(u); } catch (e) {}
+      setTimeout(function () { location.href = u; }, 800);
+    })();
+  </script>
 </body>
 </html>
 `;
@@ -293,10 +315,14 @@ export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = 
 # Requires an existing hotspot server. Verify with: /ip hotspot print
 # RouterOS has no login-url property — redirect is installed as hotspot/login.html
 
-# Allow subscribers to reach SpaiHub portal and API before login
+# Allow subscribers to reach SpaiHub portal, API, Campay, and TLS OCSP before login
+# Do not add Google Fonts or OS captive-probe hosts (they break or suppress the portal)
 /ip hotspot walled-garden ip remove [find comment~"spaihub"]
 /ip hotspot walled-garden ip add action=accept dst-host=${frontendHost} comment=spaihub-portal
 /ip hotspot walled-garden ip add action=accept dst-host=${apiHost} comment=spaihub-api
+/ip hotspot walled-garden ip add action=accept dst-host=www.campay.net comment=spaihub-campay
+/ip hotspot walled-garden ip add action=accept dst-host=demo.campay.net comment=spaihub-campay-demo
+/ip hotspot walled-garden ip add action=accept dst-host=ocsp.letsencrypt.org comment=spaihub-ocsp
 
 ${buildProfileSetupLines()}
 

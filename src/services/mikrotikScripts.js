@@ -132,29 +132,39 @@ export function buildCommandsRouterOs(commands) {
 
 export function buildConnectionScript(routerToken) {
   const mode = fetchMode(API_BASE);
+  // Keep lines short and use /system script — long scheduler on-event lines truncate in Terminal paste.
   return `# SpaiHub router connection script
 # Paste into MikroTik terminal after you have a working hotspot.
 
 /system scheduler remove [find name=spaihub-heartbeat]
 /system scheduler remove [find name=spaihub-commands]
+/system script remove [find name=spaihub-heartbeat]
+/system script remove [find name=spaihub-commands]
 
-/system scheduler add name=spaihub-heartbeat interval=1m on-event={
+/system script add name=spaihub-heartbeat source={
 :local token "${routerToken}"
 :local api "${API_BASE}/api/router/heartbeat"
-/tool fetch url=$api http-method=post http-header-field="X-Router-Token: $token" mode=${mode} keep-result=no
+:local hdr ("X-Router-Token: " . $token)
+/tool fetch url=$api http-method=post http-header-field=$hdr mode=${mode} keep-result=no
 }
 
-/system scheduler add name=spaihub-commands interval=15s on-event={
+/system script add name=spaihub-commands source={
 :local token "${routerToken}"
 :local api "${API_BASE}/api/router/commands"
 :local ackUrl "${API_BASE}/api/router/commands/ack"
-/tool fetch url=$api http-method=get http-header-field="X-Router-Token: $token" mode=${mode} dst-path=spaihub-cmd.rsc
+:local hdr ("X-Router-Token: " . $token)
+:local ackHdr ($hdr . ",Content-Type: application/json")
+:local body "{\\"success\\":true}"
+/tool fetch url=$api http-method=get http-header-field=$hdr mode=${mode} dst-path=spaihub-cmd.rsc
 :if ([:len [/file find name=spaihub-cmd.rsc]] > 0) do={
-  /import file-name=spaihub-cmd.rsc
-  /tool fetch url=$ackUrl http-method=post http-header-field="X-Router-Token: $token,Content-Type: application/json" http-data="{\\"success\\":true}" mode=${mode} keep-result=no
-  /file remove spaihub-cmd.rsc
+/import file-name=spaihub-cmd.rsc
+/tool fetch url=$ackUrl http-method=post http-header-field=$ackHdr http-data=$body mode=${mode} keep-result=no
+/file remove spaihub-cmd.rsc
 }
-}`;
+}
+
+/system scheduler add name=spaihub-heartbeat interval=1m on-event="/system script run spaihub-heartbeat"
+/system scheduler add name=spaihub-commands interval=15s on-event="/system script run spaihub-commands"`;
 }
 
 function buildProfileSetupLines() {

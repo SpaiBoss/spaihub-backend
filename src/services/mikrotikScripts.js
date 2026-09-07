@@ -225,6 +225,8 @@ export function buildMikrotikLoginHtml(routerToken) {
     background:#161d27;color:#fff;font-size:1rem}
   button{display:block;width:100%;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
     border:0;border-radius:0.5rem;font-weight:600;font-size:1rem;cursor:pointer}
+  button:disabled{opacity:0.7}
+  #status{margin-top:0.75rem;min-height:1.25rem;font-size:0.85rem;opacity:0.75}
   .momo{display:block;margin-top:1.5rem;color:#9fb0c3;font-size:0.85rem;text-decoration:none;line-height:1.45}
   .momo strong{color:#d7e0ea;font-weight:600}
   .hint{display:block;margin-top:0.25rem;opacity:0.65;font-size:0.75rem}
@@ -234,15 +236,16 @@ export function buildMikrotikLoginHtml(routerToken) {
   <div class="card">
     <h1>SpaiHub</h1>
     <p class="sub">Enter your voucher to get online</p>
-    <form id="redeem" method="post" action="${redeemAction}">
+    <form id="redeem" method="post" action="${redeemAction}" accept-charset="UTF-8">
       <label for="code">Voucher code</label>
-      <input id="code" name="code" required autocomplete="username" autocapitalize="characters" spellcheck="false">
+      <input id="code" name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false">
       <label for="pin">PIN</label>
-      <input id="pin" name="pin" type="password" required autocomplete="current-password" inputmode="numeric">
+      <input id="pin" name="pin" type="text" required autocomplete="off" inputmode="numeric">
       <input type="hidden" name="macAddress" value="$(mac)">
       <input type="hidden" name="linkLogin" value="$(link-login-only)">
       <input type="hidden" name="deviceId" id="deviceId" value="">
-      <button type="submit">Redeem and connect</button>
+      <button id="submitBtn" type="submit">Redeem and connect</button>
+      <p id="status"></p>
     </form>
     <a class="momo" href="${portalUrl}">
       <strong>Pay automatically via MoMo</strong>
@@ -262,7 +265,18 @@ export function buildMikrotikLoginHtml(routerToken) {
         });
         try { localStorage.setItem(key, id); } catch (e) {}
       }
-      document.getElementById("deviceId").value = id;
+      var deviceInput = document.getElementById("deviceId");
+      if (deviceInput) deviceInput.value = id;
+      var form = document.getElementById("redeem");
+      var btn = document.getElementById("submitBtn");
+      var status = document.getElementById("status");
+      if (form && btn) {
+        form.addEventListener("submit", function () {
+          btn.disabled = true;
+          btn.textContent = "Please wait…";
+          if (status) status.textContent = "Contacting SpaiHub…";
+        });
+      }
     })();
   </script>
 </body>

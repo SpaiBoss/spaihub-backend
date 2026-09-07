@@ -591,32 +591,41 @@ function captiveHtmlShell(title, bodyHtml) {
 function buildRedeemSuccessHtml(connectUrl, result) {
   const user = escapeHtml(result.hotspotUsername);
   const pin = escapeHtml(result.hotspotPin);
+  const pkg = escapeHtml(result.packageName || 'Access ready');
+
   if (connectUrl) {
     const href = escapeHtml(connectUrl);
+    // Do NOT auto-redirect HTTPS → http://router (captive WebViews block it and look like "nothing happened").
+    // Require a tap so navigation is a user gesture.
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="0;url=${href}">
-<title>Connecting</title>
+<title>Access ready</title>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:#0E141B;color:#fff;padding:1.25rem;text-align:center}
-  .btn{display:inline-block;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
-    text-decoration:none;border-radius:0.5rem;font-weight:600}
-  .muted{opacity:0.7;font-size:0.9rem}
+  .btn{display:inline-block;margin-top:1.25rem;padding:0.95rem 1.35rem;background:#0F766E;color:#fff;
+    text-decoration:none;border-radius:0.5rem;font-weight:600;font-size:1.05rem}
+  .muted{opacity:0.7;font-size:0.9rem;margin:0.5rem 0 0}
+  .creds{margin-top:1.25rem;padding:0.85rem;border:1px solid #2a3441;border-radius:0.5rem;text-align:left;font-size:0.85rem}
+  .creds strong{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style>
 </head>
 <body>
 <div>
-<h1>Connecting…</h1>
-<p class="muted">${escapeHtml(result.packageName || 'Access ready')}</p>
-<p class="muted">If nothing happens, tap below.</p>
+<h1>Access ready</h1>
+<p class="muted">${pkg}</p>
+<p class="muted">Tap below to finish connecting on this WiFi.</p>
 <p><a class="btn" href="${href}">Connect to WiFi now</a></p>
+<div class="creds">
+  <div>Username: <strong>${user}</strong></div>
+  <div style="margin-top:0.35rem">PIN: <strong>${pin}</strong></div>
 </div>
-<script>try{location.replace(${JSON.stringify(connectUrl)});}catch(e){}</script>
+<p class="muted">If connect fails, wait 15 seconds and tap again (router is importing access).</p>
+</div>
 </body>
 </html>`;
   }
@@ -624,6 +633,7 @@ function buildRedeemSuccessHtml(connectUrl, result) {
   return captiveHtmlShell(
     'Voucher ready',
     `<h1>Voucher ready</h1>
+<p class="muted">${pkg}</p>
 <p class="muted">Enter these on the hotspot login page:</p>
 <p>Username: <strong>${user}</strong><br>PIN: <strong>${pin}</strong></p>
 <p class="muted"><a href="javascript:history.back()">Back</a></p>`

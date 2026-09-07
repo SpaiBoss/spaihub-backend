@@ -60,7 +60,10 @@ async function loadPortalRouter(routerToken, { includePackages = false } = {}) {
 }
 
 function normalizeVoucherCode(code) {
-  return code.trim().toUpperCase().replace(/\s+/g, '');
+  return String(code || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
 }
 
 function normalizePin(pin) {
@@ -670,18 +673,24 @@ export async function redeemVoucher(req, res, next) {
 
 /** Form POST from MikroTik login.html — returns HTML redirect to link-login (no SPA / CORS). */
 export async function redeemConnect(req, res, next) {
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const { routerToken } = req.params;
     const body = req.body || {};
+    let deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : '';
+    if (!isValidDeviceId(deviceId)) {
+      // Captive WebViews often block JS/localStorage — mint a device id server-side.
+      deviceId = crypto.randomUUID();
+    }
+
     const result = await performVoucherRedeem({
       routerToken,
       code: body.code,
       pin: body.pin,
       macAddress: body.macAddress || body.mac,
-      deviceId: body.deviceId,
+      deviceId,
     });
 
-    res.setHeader('Cache-Control', 'no-store');
     res.type('html');
 
     if (!result.ok) {
@@ -695,11 +704,10 @@ export async function redeemConnect(req, res, next) {
     );
     return res.send(buildRedeemSuccessHtml(connectUrl, result));
   } catch (err) {
-    if (err.statusCode) {
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(err.statusCode).type('html').send(buildRedeemErrorHtml(err.message));
-    }
-    next(err);
+    // Always HTML for this endpoint — never fall through to JSON error middleware.
+    const message = err.statusCode ? err.message : 'Something went wrong. Go back and try again.';
+    const status = err.statusCode || 500;
+    return res.status(status).type('html').send(buildRedeemErrorHtml(message));
   }
 }
 

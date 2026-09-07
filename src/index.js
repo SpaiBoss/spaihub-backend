@@ -32,14 +32,40 @@ const PORT = process.env.PORT || 4000;
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
+
+/** MikroTik login.html is served from the router; phones POST with that private Origin. */
+function isCaptivePortalOrigin(origin) {
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol !== 'http:' && protocol !== 'https:') return false;
+    if (hostname === 'localhost' || hostname.endsWith('.local')) return true;
+    if (hostname === 'login.hotspot' || hostname.includes('hotspot')) return true;
+
+    const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!ipv4) return false;
+    const parts = ipv4.slice(1).map(Number);
+    if (parts.some((n) => n > 255)) return false;
+    const [a, b] = parts;
+    if (a === 10) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 169 && b === 254) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 const corsOrigin = (origin, callback) => {
+  // Never callback(error) — that becomes a JSON 500 and breaks captive form POSTs.
   if (!origin) return callback(null, true);
   if (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(origin)) {
     return callback(null, true);
   }
   const allowed = process.env.FRONTEND_URL || 'http://localhost:5173';
   if (origin === allowed) return callback(null, true);
-  callback(new Error(`CORS blocked for origin: ${origin}`));
+  if (isCaptivePortalOrigin(origin)) return callback(null, true);
+  return callback(null, false);
 };
 
 app.use(cors({ origin: corsOrigin, credentials: true }));

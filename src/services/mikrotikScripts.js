@@ -151,7 +151,7 @@ export function buildConnectionScript(routerToken) {
 /tool fetch url=$api http-method=get http-header-field="X-Router-Token: $token" mode=${mode} dst-path=spaihub-cmd.rsc
 :if ([:len [/file find name=spaihub-cmd.rsc]] > 0) do={
   /import file-name=spaihub-cmd.rsc
-  /tool fetch url=$ackUrl http-method=post http-header-field="X-Router-Token: $token" http-header-field="Content-Type: application/json" http-data="{\\"success\\":true}" mode=${mode} keep-result=no
+  /tool fetch url=$ackUrl http-method=post http-header-field="X-Router-Token: $token,Content-Type: application/json" http-data="{\\"success\\":true}" mode=${mode} keep-result=no
   /file remove spaihub-cmd.rsc
 }
 }`;

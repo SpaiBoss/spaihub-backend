@@ -367,177 +367,337 @@ export async function initiatePayment(req, res, next) {
   }
 }
 
+async function performVoucherRedeem({ routerToken, code, pin, macAddress, deviceId }) {
+  if (!code?.trim() || !pin?.trim() || !isValidDeviceId(deviceId)) {
+    return { ok: false, status: 400, error: 'Voucher code, PIN, and deviceId are required' };
+  }
+
+  const normalizedMac = normalizeMac(macAddress);
+  const normalizedPin = normalizePin(pin);
+
+  const router = await loadPortalRouter(routerToken);
+  const accessError = portalAccessError(router);
+  if (accessError) {
+    return { ok: false, status: accessError.status, error: accessError.error };
+  }
+
+  const normalizedCode = normalizeVoucherCode(code);
+  const voucher = await prisma.voucher.findUnique({
+    where: { code: normalizedCode },
+    include: { package: true },
+  });
+
+  if (!voucher) {
+    return { ok: false, status: 404, error: 'Invalid voucher code' };
+  }
+
+  if (!voucher.pin) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'This voucher has no PIN. Contact the location owner for a new voucher.',
+    };
+  }
+
+  if (voucher.pin !== normalizedPin) {
+    return { ok: false, status: 400, error: 'Invalid PIN' };
+  }
+
+  if (voucher.locationId !== router.locationId) {
+    return { ok: false, status: 400, error: 'This voucher is not valid at this location' };
+  }
+
+  if (voucher.status === 'REVOKED') {
+    return { ok: false, status: 400, error: 'This voucher has been revoked' };
+  }
+
+  if (voucher.status === 'EXPIRED' || (voucher.expiresAt && voucher.expiresAt < new Date())) {
+    if (voucher.status === 'UNUSED') {
+      await prisma.voucher.update({ where: { id: voucher.id }, data: { status: 'EXPIRED' } });
+    }
+    return { ok: false, status: 400, error: 'This voucher has expired' };
+  }
+
+  const trimmedDeviceId = deviceId.trim();
+  const activeSessions = await getActiveVoucherSessions(voucher.id);
+  const isExistingDevice = activeSessions.some((session) => session.deviceId === trimmedDeviceId);
+
+  if (voucher.status === 'REDEEMED' && activeSessions.length === 0) {
+    return { ok: false, status: 400, error: 'This voucher has already been used' };
+  }
+
+  if (voucher.status !== 'UNUSED' && voucher.status !== 'REDEEMED') {
+    return { ok: false, status: 400, error: 'This voucher is not available' };
+  }
+
+  const policyCheck = validateAccessPolicy(router.location, {
+    activeDeviceCount: activeSessions.length,
+    isExistingDevice,
+    deviceLimit: voucher.package.maxSharedDevices,
+  });
+
+  if (!policyCheck.ok) {
+    return { ok: false, status: 400, error: policyCheck.error };
+  }
+
+  const hotspotUsername = voucher.code;
+  const hotspotPin = voucher.pin;
+
+  if (isExistingDevice) {
+    const existingSession = activeSessions.find((session) => session.deviceId === trimmedDeviceId);
+    const synced = await syncSessionIdentity(existingSession, {
+      deviceId: trimmedDeviceId,
+      mac: normalizedMac,
+    });
+
+    return {
+      ok: true,
+      message: 'Already connected',
+      sessionEnd: synced.sessionEnd,
+      packageName: voucher.package.name,
+      hotspotUsername,
+      hotspotPin,
+    };
+  }
+
+  const sessionByMac =
+    normalizedMac && activeSessions.find((session) => session.subscriberMac === normalizedMac);
+  if (sessionByMac) {
+    const synced = await syncSessionIdentity(sessionByMac, {
+      deviceId: trimmedDeviceId,
+      mac: normalizedMac,
+    });
+
+    return {
+      ok: true,
+      message: 'Already connected',
+      sessionEnd: synced.sessionEnd,
+      packageName: voucher.package.name,
+      hotspotUsername,
+      hotspotPin,
+    };
+  }
+
+  const now = new Date();
+  const sessionEnd = new Date(now.getTime() + voucher.package.durationMinutes * 60 * 1000);
+
+  await prisma.$transaction(
+    async (tx) => {
+      const locked = await tx.voucher.findUnique({ where: { id: voucher.id } });
+      if (!locked || (locked.status !== 'UNUSED' && locked.status !== 'REDEEMED')) {
+        throw Object.assign(new Error('Voucher is no longer available'), { statusCode: 409 });
+      }
+
+      await tx.transaction.create({
+        data: {
+          ownerId: router.location.ownerId,
+          locationId: router.locationId,
+          routerId: router.id,
+          packageId: voucher.packageId,
+          voucherId: voucher.id,
+          subscriberPhone: 'VOUCHER',
+          subscriberMac: normalizedMac,
+          deviceId: trimmedDeviceId,
+          hotspotUsername,
+          hotspotPin,
+          amountXaf: 0,
+          platformFeeXaf: 0,
+          ownerCreditXaf: 0,
+          status: 'SUCCESS',
+          sessionStart: now,
+          sessionEnd,
+        },
+      });
+
+      await tx.voucher.update({
+        where: { id: voucher.id },
+        data: {
+          status: 'REDEEMED',
+          redeemedAt: locked.redeemedAt ?? now,
+          redeemedMac: normalizedMac ?? locked.redeemedMac,
+          routerId: router.id,
+        },
+      });
+    },
+    { isolationLevel: 'Serializable' }
+  );
+
+  await provisionHotspotUser({
+    routerId: router.id,
+    location: router.location,
+    pkg: voucher.package,
+    username: hotspotUsername,
+    password: hotspotPin,
+  });
+
+  return {
+    ok: true,
+    message: 'Voucher redeemed successfully',
+    sessionEnd,
+    packageName: voucher.package.name,
+    hotspotUsername,
+    hotspotPin,
+  };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildLinkLoginUrl(linkLogin, username, password) {
+  if (!linkLogin || !username || !password) return null;
+  if (linkLogin.includes('$(')) return null;
+  try {
+    const url = new URL(linkLogin);
+    url.searchParams.set('username', username);
+    url.searchParams.set('password', password);
+    return url.toString();
+  } catch {
+    const separator = linkLogin.includes('?') ? '&' : '?';
+    return `${linkLogin}${separator}username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  }
+}
+
+function captiveHtmlShell(title, bodyHtml) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0E141B;color:#fff;padding:1.25rem;text-align:center}
+  a{color:#5eead4}
+  .btn{display:inline-block;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
+    text-decoration:none;border-radius:0.5rem;font-weight:600}
+  .err{color:#fca5a5}
+  .muted{opacity:0.7;font-size:0.9rem}
+</style>
+</head>
+<body><div>${bodyHtml}</div></body>
+</html>`;
+}
+
+function buildRedeemSuccessHtml(connectUrl, result) {
+  const user = escapeHtml(result.hotspotUsername);
+  const pin = escapeHtml(result.hotspotPin);
+  if (connectUrl) {
+    const href = escapeHtml(connectUrl);
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${href}">
+<title>Connecting</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0E141B;color:#fff;padding:1.25rem;text-align:center}
+  .btn{display:inline-block;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
+    text-decoration:none;border-radius:0.5rem;font-weight:600}
+  .muted{opacity:0.7;font-size:0.9rem}
+</style>
+</head>
+<body>
+<div>
+<h1>Connecting…</h1>
+<p class="muted">${escapeHtml(result.packageName || 'Access ready')}</p>
+<p class="muted">If nothing happens, tap below.</p>
+<p><a class="btn" href="${href}">Connect to WiFi now</a></p>
+</div>
+<script>try{location.replace(${JSON.stringify(connectUrl)});}catch(e){}</script>
+</body>
+</html>`;
+  }
+
+  return captiveHtmlShell(
+    'Voucher ready',
+    `<h1>Voucher ready</h1>
+<p class="muted">Enter these on the hotspot login page:</p>
+<p>Username: <strong>${user}</strong><br>PIN: <strong>${pin}</strong></p>
+<p class="muted"><a href="javascript:history.back()">Back</a></p>`
+  );
+}
+
+function buildRedeemErrorHtml(error) {
+  return captiveHtmlShell(
+    'Redeem failed',
+    `<h1 class="err">Could not redeem</h1>
+<p>${escapeHtml(error)}</p>
+<p><a class="btn" href="javascript:history.back()">Try again</a></p>`
+  );
+}
+
 export async function redeemVoucher(req, res, next) {
   try {
     const { routerToken } = req.params;
     const { code, pin, macAddress, deviceId } = req.body;
 
-    if (!code?.trim() || !pin?.trim() || !isValidDeviceId(deviceId)) {
-      return res.status(400).json({ error: 'Voucher code, PIN, and deviceId are required' });
-    }
-
-    const normalizedMac = normalizeMac(macAddress);
-    const normalizedPin = normalizePin(pin);
-
-    const router = await loadPortalRouter(routerToken);
-    const accessError = portalAccessError(router);
-    if (accessError) {
-      return res.status(accessError.status).json({ error: accessError.error });
-    }
-
-    const normalizedCode = normalizeVoucherCode(code);
-    const voucher = await prisma.voucher.findUnique({
-      where: { code: normalizedCode },
-      include: { package: true },
+    const result = await performVoucherRedeem({
+      routerToken,
+      code,
+      pin,
+      macAddress,
+      deviceId,
     });
 
-    if (!voucher) {
-      return res.status(404).json({ error: 'Invalid voucher code' });
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
     }
-
-    if (!voucher.pin) {
-      return res.status(400).json({ error: 'This voucher has no PIN. Contact the location owner for a new voucher.' });
-    }
-
-    if (voucher.pin !== normalizedPin) {
-      return res.status(400).json({ error: 'Invalid PIN' });
-    }
-
-    if (voucher.locationId !== router.locationId) {
-      return res.status(400).json({ error: 'This voucher is not valid at this location' });
-    }
-
-    if (voucher.status === 'REVOKED') {
-      return res.status(400).json({ error: 'This voucher has been revoked' });
-    }
-
-    if (voucher.status === 'EXPIRED' || (voucher.expiresAt && voucher.expiresAt < new Date())) {
-      if (voucher.status === 'UNUSED') {
-        await prisma.voucher.update({ where: { id: voucher.id }, data: { status: 'EXPIRED' } });
-      }
-      return res.status(400).json({ error: 'This voucher has expired' });
-    }
-
-    const trimmedDeviceId = deviceId.trim();
-    const activeSessions = await getActiveVoucherSessions(voucher.id);
-    const isExistingDevice = activeSessions.some((session) => session.deviceId === trimmedDeviceId);
-
-    if (voucher.status === 'REDEEMED' && activeSessions.length === 0) {
-      return res.status(400).json({ error: 'This voucher has already been used' });
-    }
-
-    if (voucher.status !== 'UNUSED' && voucher.status !== 'REDEEMED') {
-      return res.status(400).json({ error: 'This voucher is not available' });
-    }
-
-    const policyCheck = validateAccessPolicy(router.location, {
-      activeDeviceCount: activeSessions.length,
-      isExistingDevice,
-      deviceLimit: voucher.package.maxSharedDevices,
-    });
-
-    if (!policyCheck.ok) {
-      return res.status(400).json({ error: policyCheck.error });
-    }
-
-    const hotspotUsername = voucher.code;
-    const hotspotPin = voucher.pin;
-
-    if (isExistingDevice) {
-      const existingSession = activeSessions.find((session) => session.deviceId === trimmedDeviceId);
-      const synced = await syncSessionIdentity(existingSession, {
-        deviceId: trimmedDeviceId,
-        mac: normalizedMac,
-      });
-
-      return res.json({
-        message: 'Already connected',
-        sessionEnd: synced.sessionEnd,
-        packageName: voucher.package.name,
-        hotspotUsername,
-        hotspotPin,
-      });
-    }
-
-    const sessionByMac =
-      normalizedMac && activeSessions.find((session) => session.subscriberMac === normalizedMac);
-    if (sessionByMac) {
-      const synced = await syncSessionIdentity(sessionByMac, {
-        deviceId: trimmedDeviceId,
-        mac: normalizedMac,
-      });
-
-      return res.json({
-        message: 'Already connected',
-        sessionEnd: synced.sessionEnd,
-        packageName: voucher.package.name,
-        hotspotUsername,
-        hotspotPin,
-      });
-    }
-
-    const now = new Date();
-    const sessionEnd = new Date(now.getTime() + voucher.package.durationMinutes * 60 * 1000);
-
-    await prisma.$transaction(
-      async (tx) => {
-        const locked = await tx.voucher.findUnique({ where: { id: voucher.id } });
-        if (!locked || (locked.status !== 'UNUSED' && locked.status !== 'REDEEMED')) {
-          throw Object.assign(new Error('Voucher is no longer available'), { statusCode: 409 });
-        }
-
-        await tx.transaction.create({
-          data: {
-            ownerId: router.location.ownerId,
-            locationId: router.locationId,
-            routerId: router.id,
-            packageId: voucher.packageId,
-            voucherId: voucher.id,
-            subscriberPhone: 'VOUCHER',
-            subscriberMac: normalizedMac,
-            deviceId: trimmedDeviceId,
-            hotspotUsername,
-            hotspotPin,
-            amountXaf: 0,
-            platformFeeXaf: 0,
-            ownerCreditXaf: 0,
-            status: 'SUCCESS',
-            sessionStart: now,
-            sessionEnd,
-          },
-        });
-
-        await tx.voucher.update({
-          where: { id: voucher.id },
-          data: {
-            status: 'REDEEMED',
-            redeemedAt: locked.redeemedAt ?? now,
-            redeemedMac: normalizedMac ?? locked.redeemedMac,
-            routerId: router.id,
-          },
-        });
-      },
-      { isolationLevel: 'Serializable' }
-    );
-
-    await provisionHotspotUser({
-      routerId: router.id,
-      location: router.location,
-      pkg: voucher.package,
-      username: hotspotUsername,
-      password: hotspotPin,
-    });
 
     res.json({
-      message: 'Voucher redeemed successfully',
-      sessionEnd,
-      packageName: voucher.package.name,
-      hotspotUsername,
-      hotspotPin,
+      message: result.message,
+      sessionEnd: result.sessionEnd,
+      packageName: result.packageName,
+      hotspotUsername: result.hotspotUsername,
+      hotspotPin: result.hotspotPin,
     });
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message });
+    }
+    next(err);
+  }
+}
+
+/** Form POST from MikroTik login.html — returns HTML redirect to link-login (no SPA / CORS). */
+export async function redeemConnect(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const body = req.body || {};
+    const result = await performVoucherRedeem({
+      routerToken,
+      code: body.code,
+      pin: body.pin,
+      macAddress: body.macAddress || body.mac,
+      deviceId: body.deviceId,
+    });
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html');
+
+    if (!result.ok) {
+      return res.status(result.status).send(buildRedeemErrorHtml(result.error));
+    }
+
+    const connectUrl = buildLinkLoginUrl(
+      body.linkLogin || body['link-login'] || body['link-login-only'],
+      result.hotspotUsername,
+      result.hotspotPin
+    );
+    return res.send(buildRedeemSuccessHtml(connectUrl, result));
+  } catch (err) {
+    if (err.statusCode) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(err.statusCode).type('html').send(buildRedeemErrorHtml(err.message));
     }
     next(err);
   }

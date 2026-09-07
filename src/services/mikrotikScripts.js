@@ -199,9 +199,10 @@ function buildAntiTetheringLines(enableAntiTethering) {
   ].join('\n');
 }
 
-/** Captive-portal redirect page for MikroTik html-directory (RouterOS has no login-url property). */
+/** Captive-portal page for MikroTik html-directory (RouterOS has no login-url property). */
 export function buildMikrotikLoginHtml(routerToken) {
   const portalUrl = buildPortalUrl(routerToken);
+  const redeemAction = `${API_BASE.replace(/\/$/, '')}/portal/${routerToken}/redeem-connect`;
   // Keep MikroTik $(mac)/$(link-*) vars literal for RouterOS substitution.
   return `<!DOCTYPE html>
 <html lang="en">
@@ -215,24 +216,53 @@ export function buildMikrotikLoginHtml(routerToken) {
   *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    background:#0E141B;color:#fff;padding:1.5rem;text-align:center}
+    background:#0E141B;color:#fff;padding:1.25rem}
+  .card{width:100%;max-width:22rem;text-align:center}
   h1{font-size:1.35rem;margin:0;font-weight:700;letter-spacing:-0.02em}
-  p{margin:0.5rem 0 0;opacity:0.7;font-size:0.9rem}
-  a{display:inline-block;margin-top:1.25rem;padding:0.85rem 1.5rem;background:#0F766E;color:#fff;
-    text-decoration:none;border-radius:0.5rem;font-weight:600;font-size:1rem}
+  .sub{margin:0.45rem 0 1.25rem;opacity:0.7;font-size:0.9rem}
+  label{display:block;text-align:left;font-size:0.75rem;opacity:0.65;margin:0.65rem 0 0.3rem}
+  input{width:100%;padding:0.75rem 0.85rem;border-radius:0.5rem;border:1px solid #2a3441;
+    background:#161d27;color:#fff;font-size:1rem}
+  button{display:block;width:100%;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
+    border:0;border-radius:0.5rem;font-weight:600;font-size:1rem;cursor:pointer}
+  .momo{display:block;margin-top:1.5rem;color:#9fb0c3;font-size:0.85rem;text-decoration:none;line-height:1.45}
+  .momo strong{color:#d7e0ea;font-weight:600}
+  .hint{display:block;margin-top:0.25rem;opacity:0.65;font-size:0.75rem}
 </style>
 </head>
 <body>
-  <div>
+  <div class="card">
     <h1>SpaiHub</h1>
-    <p>Continue to pay or redeem access</p>
-    <a id="continue" href="${portalUrl}">Continue</a>
+    <p class="sub">Enter your voucher to get online</p>
+    <form id="redeem" method="post" action="${redeemAction}">
+      <label for="code">Voucher code</label>
+      <input id="code" name="code" required autocomplete="username" autocapitalize="characters" spellcheck="false">
+      <label for="pin">PIN</label>
+      <input id="pin" name="pin" type="password" required autocomplete="current-password" inputmode="numeric">
+      <input type="hidden" name="macAddress" value="$(mac)">
+      <input type="hidden" name="linkLogin" value="$(link-login-only)">
+      <input type="hidden" name="deviceId" id="deviceId" value="">
+      <button type="submit">Redeem and connect</button>
+    </form>
+    <a class="momo" href="${portalUrl}">
+      <strong>Pay automatically via MoMo</strong>
+      <span class="hint">(only laptops are supported now… phone support coming soon)</span>
+    </a>
   </div>
   <script>
     (function () {
-      var u = document.getElementById("continue").href;
-      try { location.replace(u); } catch (e) {}
-      setTimeout(function () { location.href = u; }, 800);
+      var key = "spaihub_device_${routerToken}";
+      var id = "";
+      try { id = localStorage.getItem(key) || ""; } catch (e) {}
+      if (!id) {
+        id = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+          var r = Math.random() * 16 | 0;
+          var v = c === "x" ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+        try { localStorage.setItem(key, id); } catch (e) {}
+      }
+      document.getElementById("deviceId").value = id;
     })();
   </script>
 </body>

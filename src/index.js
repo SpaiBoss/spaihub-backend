@@ -21,6 +21,7 @@ import { getStorageMode, isR2Configured } from './services/objectStorage.js';
 import { assertProductionEnv } from './utils/env.js';
 import { reconcilePendingWithdrawals } from './services/reconcileWithdrawals.js';
 import { runSessionNotificationJob } from './services/sessionNotifications.js';
+import { runLowWalletNotificationJob } from './services/ownerNotify.js';
 
 assertProductionEnv();
 
@@ -51,6 +52,7 @@ app.use(express.json({
     }
   },
 }));
+app.use(express.urlencoded({ extended: false }));
 
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -81,6 +83,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/owner', ownerRoutes);
 app.use('/portal/:routerToken/pay', portalPayLimiter);
 app.use('/portal/:routerToken/redeem', portalPayLimiter);
+app.use('/portal/:routerToken/redeem-connect', portalPayLimiter);
 app.use('/portal', portalRoutes);
 app.use('/api/router', routerRoutes);
 app.use('/api/admin', adminRoutes);
@@ -123,6 +126,11 @@ app.listen(PORT, () => {
   setInterval(() => {
     runSessionNotificationJob().catch((err) => {
       logger.warn('Session notification job failed', { error: err.message });
+    });
+  }, 5 * 60 * 1000);
+  setInterval(() => {
+    runLowWalletNotificationJob().catch((err) => {
+      logger.warn('Low wallet notification job failed', { error: err.message });
     });
   }, 5 * 60 * 1000);
 });

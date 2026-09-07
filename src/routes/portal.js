@@ -10,6 +10,7 @@ import {
   disconnectDevice,
   initiatePayment,
   redeemVoucher,
+  redeemConnect,
 } from '../controllers/portalController.js';
 
 const router = Router();
@@ -24,5 +25,6 @@ router.get('/:routerToken/pending-payment', getPendingPayment);
 router.post('/:routerToken/cancel-payment', cancelPendingPayment);
 router.post('/:routerToken/pay', initiatePayment);
 router.post('/:routerToken/redeem', redeemVoucher);
+router.post('/:routerToken/redeem-connect', redeemConnect);
 
 export default router;

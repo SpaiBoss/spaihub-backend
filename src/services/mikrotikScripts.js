@@ -202,8 +202,8 @@ function buildAntiTetheringLines(enableAntiTethering) {
 /** Captive-portal page for MikroTik html-directory (RouterOS has no login-url property). */
 export function buildMikrotikLoginHtml(routerToken) {
   const portalUrl = buildPortalUrl(routerToken);
-  const redeemAction = `${API_BASE.replace(/\/$/, '')}/portal/${routerToken}/redeem-connect`;
-  // Keep MikroTik $(mac)/$(link-*) vars literal for RouterOS substitution.
+  // MikroTik substitutes $(link-login-only), $(link-orig), etc. when serving this file.
+  // PAP form posts to the router (same origin) — reliable in phone captive WebViews.
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -225,8 +225,6 @@ export function buildMikrotikLoginHtml(routerToken) {
     background:#161d27;color:#fff;font-size:1rem}
   button{display:block;width:100%;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
     border:0;border-radius:0.5rem;font-weight:600;font-size:1rem;cursor:pointer}
-  button:disabled{opacity:0.7}
-  #status{margin-top:0.75rem;min-height:1.25rem;font-size:0.85rem;opacity:0.75}
   .momo{display:block;margin-top:1.5rem;color:#9fb0c3;font-size:0.85rem;text-decoration:none;line-height:1.45}
   .momo strong{color:#d7e0ea;font-weight:600}
   .hint{display:block;margin-top:0.25rem;opacity:0.65;font-size:0.75rem}
@@ -235,50 +233,22 @@ export function buildMikrotikLoginHtml(routerToken) {
 <body>
   <div class="card">
     <h1>SpaiHub</h1>
-    <p class="sub">Enter your voucher to get online</p>
-    <form id="redeem" method="post" action="${redeemAction}" accept-charset="UTF-8">
-      <label for="code">Voucher code</label>
-      <input id="code" name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false">
-      <label for="pin">PIN</label>
-      <input id="pin" name="pin" type="text" required autocomplete="off" inputmode="numeric">
-      <input type="hidden" name="macAddress" value="$(mac)">
-      <input type="hidden" name="linkLogin" value="$(link-login-only)">
-      <input type="hidden" name="deviceId" id="deviceId" value="">
-      <button id="submitBtn" type="submit">Redeem and connect</button>
-      <p id="status"></p>
+    <p class="sub">Enter the voucher code and PIN you received</p>
+    <form name="login" method="post" action="$(link-login-only)" accept-charset="UTF-8">
+      <input type="hidden" name="dst" value="$(link-orig)">
+      <input type="hidden" name="popup" value="true">
+      <label for="username">Voucher code</label>
+      <input id="username" name="username" type="text" required autocomplete="username"
+        autocapitalize="characters" spellcheck="false">
+      <label for="password">PIN</label>
+      <input id="password" name="password" type="text" required autocomplete="current-password" inputmode="numeric">
+      <button type="submit">Connect</button>
     </form>
     <a class="momo" href="${portalUrl}">
-      <strong>Pay automatically via MoMo</strong>
-      <span class="hint">(only laptops are supported now… phone support coming soon)</span>
+      <strong>Pay with Mobile Money (laptop)</strong>
+      <span class="hint">(use a laptop browser — phones should use the voucher form above)</span>
     </a>
   </div>
-  <script>
-    (function () {
-      var key = "spaihub_device_${routerToken}";
-      var id = "";
-      try { id = localStorage.getItem(key) || ""; } catch (e) {}
-      if (!id) {
-        id = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
-          var r = Math.random() * 16 | 0;
-          var v = c === "x" ? r : (r & 0x3 | 0x8);
-          return v.toString(16);
-        });
-        try { localStorage.setItem(key, id); } catch (e) {}
-      }
-      var deviceInput = document.getElementById("deviceId");
-      if (deviceInput) deviceInput.value = id;
-      var form = document.getElementById("redeem");
-      var btn = document.getElementById("submitBtn");
-      var status = document.getElementById("status");
-      if (form && btn) {
-        form.addEventListener("submit", function () {
-          btn.disabled = true;
-          btn.textContent = "Please wait…";
-          if (status) status.textContent = "Contacting SpaiHub…";
-        });
-      }
-    })();
-  </script>
 </body>
 </html>
 `;

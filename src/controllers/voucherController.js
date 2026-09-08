@@ -4,6 +4,9 @@ import { buildVouchersPdf, PDF_LAYOUTS } from '../services/voucherPdf.js';
 import { generateHotspotPin } from '../utils/hotspotCredentials.js';
 import { brandingSelectFields, resolvePortalBranding } from '../utils/portalBranding.js';
 import { endHotspotSession } from '../services/sessionLifecycle.js';
+import * as mikrotik from '../services/mikrotik.js';
+import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
+import logger from '../utils/logger.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -40,6 +43,23 @@ async function verifyLocationOwnership(locationId, ownerId) {
   return prisma.location.findFirst({ where: { id: locationId, ownerId } });
 }
 
+/** Queue MikroTik GRANT_ACCESS so captive PAP login works without cloud redeem. */
+async function provisionVoucherOnRouter(routerId, pkg, voucher) {
+  if (!routerId || !voucher?.code || !voucher?.pin) return;
+  const access = resolvePackageAccessLimits(pkg);
+  await mikrotik.grantAccess({
+    routerId,
+    username: voucher.code,
+    password: voucher.pin,
+    sessionMinutes: access.sessionMinutes,
+    packageType: access.packageType,
+    dataCapMb: access.applyByteLimit ? access.dataCapMb : null,
+    uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
+    downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
+    sharedUsers: access.sharedUsers,
+  });
+}
+
 export async function createVouchers(req, res, next) {
   try {
     const { locationId } = req.params;
@@ -73,6 +93,12 @@ export async function createVouchers(req, res, next) {
       }
     }
 
+    const router = await prisma.router.findFirst({
+      where: { locationId, isActive: true },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
     const trimmedBatch = batchLabel?.trim() || null;
     const vouchers = [];
     for (let i = 0; i < qty; i++) {
@@ -85,10 +111,31 @@ export async function createVouchers(req, res, next) {
       vouchers.push(voucher);
     }
 
+    if (router) {
+      const results = await Promise.allSettled(
+        vouchers.map((voucher) => provisionVoucherOnRouter(router.id, pkg, voucher))
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        logger.warn('Some voucher GRANT_ACCESS commands failed to queue', {
+          locationId,
+          routerId: router.id,
+          failed,
+          total: vouchers.length,
+        });
+      }
+    } else {
+      logger.warn('Vouchers created without active router — captive login will fail until provisioned', {
+        locationId,
+        count: vouchers.length,
+      });
+    }
+
     res.status(201).json({
       count: vouchers.length,
       batchLabel: trimmedBatch,
       vouchers,
+      provisionedToRouter: Boolean(router),
     });
   } catch (err) {
     next(err);

@@ -112,8 +112,22 @@ export async function createVouchers(req, res, next) {
     }
 
     if (router) {
+      // Provision this batch and any older UNUSED vouchers still missing on the router.
+      const unusedToProvision = await prisma.voucher.findMany({
+        where: {
+          locationId,
+          status: 'UNUSED',
+          pin: { not: null },
+        },
+        include: {
+          package: true,
+        },
+      });
+
       const results = await Promise.allSettled(
-        vouchers.map((voucher) => provisionVoucherOnRouter(router.id, pkg, voucher))
+        unusedToProvision.map((voucher) =>
+          provisionVoucherOnRouter(router.id, voucher.package || pkg, voucher)
+        )
       );
       const failed = results.filter((r) => r.status === 'rejected').length;
       if (failed > 0) {
@@ -121,7 +135,7 @@ export async function createVouchers(req, res, next) {
           locationId,
           routerId: router.id,
           failed,
-          total: vouchers.length,
+          total: unusedToProvision.length,
         });
       }
     } else {

@@ -51,10 +51,9 @@ export function buildPreviewPortalUrl(routerToken) {
 
 export function commandToRouterOs(cmd) {
   if (cmd.type === 'UPDATE_ACCESS_POLICY') {
-    const enableAntiTethering = Boolean(cmd.payload?.enableAntiTethering);
     return [
       `# SpaiHub UPDATE_ACCESS_POLICY ${cmd.id}`,
-      buildAntiTetheringLines(enableAntiTethering),
+      buildRemoveAntiTetheringLines(),
     ].join('\n');
   }
 
@@ -181,29 +180,20 @@ function buildProfileSetupLines() {
   return lines.join('\n');
 }
 
-function buildAntiTetheringLines(enableAntiTethering) {
-  if (!enableAntiTethering) {
-    return [
-      '# Anti-tethering disabled (hotspot sharing allowed at this location)',
-      '/ip firewall mangle remove [find comment~"spaihub-anti-tether"]',
-      '/ip firewall filter remove [find comment~"spaihub-anti-tether"]',
-    ].join('\n');
-  }
-
+/** Always remove legacy TTL anti-tether rules — they blocked legitimate phone traffic. */
+function buildRemoveAntiTetheringLines() {
   return [
-    '# Block tethered traffic (TTL=63 indicates one hop consumed inside phone hotspot)',
+    '# Remove legacy SpaiHub anti-tether rules (TTL=63 drop is unsafe on phones)',
     '/ip firewall mangle remove [find comment~"spaihub-anti-tether"]',
     '/ip firewall filter remove [find comment~"spaihub-anti-tether"]',
-    '/ip firewall mangle add chain=forward action=mark-packet new-packet-mark=spaihub-tether passthrough=no ttl=equal:63 comment=spaihub-anti-tether',
-    '/ip firewall filter add chain=forward action=drop packet-mark=spaihub-tether comment=spaihub-anti-tether',
   ].join('\n');
 }
 
-/** Captive-portal page for MikroTik html-directory (RouterOS has no login-url property). */
+/** Captive-portal page for MikroTik html-directory — redirects to cloud MoMo portal. */
 export function buildMikrotikLoginHtml(routerToken) {
   const portalUrl = buildPortalUrl(routerToken);
-  // Posts to the router (same origin). Uses http-pap (plaintext password).
-  // Show $(error) so failed logins are visible instead of a silent reload.
+  const portalUrlHtml = portalUrl.replace(/&/g, '&amp;');
+  const portalUrlJs = JSON.stringify(portalUrl);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -211,6 +201,7 @@ export function buildMikrotikLoginHtml(routerToken) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="pragma" content="no-cache">
 <meta http-equiv="expires" content="-1">
+<meta http-equiv="refresh" content="0;url=${portalUrlHtml}">
 <title>SpaiHub</title>
 <style>
   *{box-sizing:border-box}
@@ -219,38 +210,21 @@ export function buildMikrotikLoginHtml(routerToken) {
     background:#0E141B;color:#fff;padding:1.25rem}
   .card{width:100%;max-width:22rem;text-align:center}
   h1{font-size:1.35rem;margin:0;font-weight:700;letter-spacing:-0.02em}
-  .sub{margin:0.45rem 0 1.25rem;opacity:0.7;font-size:0.9rem}
-  label{display:block;text-align:left;font-size:0.75rem;opacity:0.65;margin:0.65rem 0 0.3rem}
-  input{width:100%;padding:0.75rem 0.85rem;border-radius:0.5rem;border:1px solid #2a3441;
-    background:#161d27;color:#fff;font-size:1rem}
-  button{display:block;width:100%;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
-    border:0;border-radius:0.5rem;font-weight:600;font-size:1rem;cursor:pointer}
-  .err{margin:0 0 1rem;padding:0.65rem 0.75rem;border-radius:0.5rem;background:#3f1d1d;color:#fca5a5;
-    font-size:0.85rem;text-align:left}
-  .momo{display:block;margin-top:1.5rem;color:#9fb0c3;font-size:0.85rem;text-decoration:none;line-height:1.45}
-  .momo strong{color:#d7e0ea;font-weight:600}
-  .hint{display:block;margin-top:0.25rem;opacity:0.65;font-size:0.75rem}
+  .sub{margin:0.45rem 0 1.25rem;opacity:0.7;font-size:0.9rem;line-height:1.45}
+  a.btn{display:block;width:100%;margin-top:0.5rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
+    border-radius:0.5rem;font-weight:600;font-size:1rem;text-decoration:none}
+  .hint{margin-top:1rem;opacity:0.55;font-size:0.75rem;line-height:1.4}
 </style>
+<script>
+  location.replace(${portalUrlJs});
+</script>
 </head>
 <body>
   <div class="card">
     <h1>SpaiHub</h1>
-    <p class="sub">Enter the voucher code and PIN you received</p>
-    $(if error)<p class="err">$(error)</p>$(endif)
-    <form name="login" method="post" action="$(link-login-only)" accept-charset="UTF-8"
-      onsubmit="this.username.value=this.username.value.toUpperCase().replace(/\\s+/g,'');return true;">
-      <input type="hidden" name="dst" value="$(link-orig)">
-      <label for="username">Voucher code</label>
-      <input id="username" name="username" type="text" required autocomplete="username"
-        autocapitalize="characters" spellcheck="false">
-      <label for="password">PIN</label>
-      <input id="password" name="password" type="text" required autocomplete="current-password" inputmode="numeric">
-      <button type="submit">Connect</button>
-    </form>
-    <a class="momo" href="${portalUrl}">
-      <strong>Pay with Mobile Money (laptop)</strong>
-      <span class="hint">(use a laptop browser — phones should use the voucher form above)</span>
-    </a>
+    <p class="sub">Opening WiFi portal — pay with Mobile Money or use a voucher.</p>
+    <a class="btn" href="${portalUrlHtml}">Continue to portal</a>
+    <p class="hint">After payment, your username and PIN stay on screen. Tap Connect when ready.</p>
   </div>
 </body>
 </html>
@@ -331,7 +305,6 @@ export function buildChrBootstrapScript(chrConfig = DEFAULT_CHR_CONFIG) {
 export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = null) {
   const frontendHost = new URL(FRONTEND_URL).host;
   const apiHost = new URL(API_BASE).host;
-  const enableAntiTethering = !location.allowHotspotSharing;
   const hotspotTarget = chrConfig?.hotspotName
     ? `[find name="${escapeRouterOsString(chrConfig.hotspotName)}"]`
     : '[find]';
@@ -353,7 +326,7 @@ export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = 
 
 ${buildProfileSetupLines()}
 
-${buildAntiTetheringLines(enableAntiTethering)}
+${buildRemoveAntiTetheringLines()}
 
 # Apply login methods + html directory on every profile used by a hotspot
 :foreach hsId in=[/ip hotspot find] do={

@@ -618,13 +618,13 @@ function buildRedeemSuccessHtml(connectUrl, result) {
 <div>
 <h1>Access ready</h1>
 <p class="muted">${pkg}</p>
-<p class="muted">Tap below to finish connecting on this WiFi.</p>
+<p class="muted">Wait ~20 seconds for the router to import access, then tap Connect. Your username and PIN stay on this page.</p>
 <p><a class="btn" href="${href}">Connect to WiFi now</a></p>
 <div class="creds">
   <div>Username: <strong>${user}</strong></div>
   <div style="margin-top:0.35rem">PIN: <strong>${pin}</strong></div>
 </div>
-<p class="muted">If connect fails, wait 15 seconds and tap again (router is importing access).</p>
+<p class="muted">If connect fails, wait a few seconds and tap again.</p>
 </div>
 </body>
 </html>`;

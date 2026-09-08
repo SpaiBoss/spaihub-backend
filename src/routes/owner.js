@@ -48,14 +48,6 @@ import {
 import { exportOwnerAccountingReport } from '../controllers/reportsController.js';
 import { getMe, updateMe, changePassword } from '../controllers/ownerController.js';
 import { getActiveSessions, kickSession } from '../controllers/sessionController.js';
-import {
-  listNotifications,
-  unreadNotificationCount,
-  markNotificationRead,
-  markAllNotificationsRead,
-  getNotificationPrefs,
-  updateNotificationPrefs,
-} from '../controllers/notificationController.js';
 
 const router = Router();
 
@@ -64,13 +56,6 @@ router.use(authenticateOwner);
 router.get('/me', getMe);
 router.patch('/me', updateMe);
 router.post('/change-password', changePassword);
-
-router.get('/notifications', listNotifications);
-router.get('/notifications/unread-count', unreadNotificationCount);
-router.post('/notifications/read-all', markAllNotificationsRead);
-router.post('/notifications/:id/read', markNotificationRead);
-router.get('/notification-prefs', getNotificationPrefs);
-router.patch('/notification-prefs', updateNotificationPrefs);
 
 router.get('/sessions', getActiveSessions);
 router.post('/sessions/:transactionId/kick', kickSession);

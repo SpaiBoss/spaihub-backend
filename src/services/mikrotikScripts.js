@@ -202,8 +202,8 @@ function buildAntiTetheringLines(enableAntiTethering) {
 /** Captive-portal page for MikroTik html-directory (RouterOS has no login-url property). */
 export function buildMikrotikLoginHtml(routerToken) {
   const portalUrl = buildPortalUrl(routerToken);
-  // MikroTik substitutes $(link-login-only), $(link-orig), etc. when serving this file.
-  // PAP form posts to the router (same origin) — reliable in phone captive WebViews.
+  // Posts to the router (same origin). Uses http-pap (plaintext password).
+  // Show $(error) so failed logins are visible instead of a silent reload.
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -225,6 +225,8 @@ export function buildMikrotikLoginHtml(routerToken) {
     background:#161d27;color:#fff;font-size:1rem}
   button{display:block;width:100%;margin-top:1rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
     border:0;border-radius:0.5rem;font-weight:600;font-size:1rem;cursor:pointer}
+  .err{margin:0 0 1rem;padding:0.65rem 0.75rem;border-radius:0.5rem;background:#3f1d1d;color:#fca5a5;
+    font-size:0.85rem;text-align:left}
   .momo{display:block;margin-top:1.5rem;color:#9fb0c3;font-size:0.85rem;text-decoration:none;line-height:1.45}
   .momo strong{color:#d7e0ea;font-weight:600}
   .hint{display:block;margin-top:0.25rem;opacity:0.65;font-size:0.75rem}
@@ -234,9 +236,10 @@ export function buildMikrotikLoginHtml(routerToken) {
   <div class="card">
     <h1>SpaiHub</h1>
     <p class="sub">Enter the voucher code and PIN you received</p>
-    <form name="login" method="post" action="$(link-login-only)" accept-charset="UTF-8">
+    $(if error)<p class="err">$(error)</p>$(endif)
+    <form name="login" method="post" action="$(link-login-only)" accept-charset="UTF-8"
+      onsubmit="this.username.value=this.username.value.toUpperCase().replace(/\\s+/g,'');return true;">
       <input type="hidden" name="dst" value="$(link-orig)">
-      <input type="hidden" name="popup" value="true">
       <label for="username">Voucher code</label>
       <input id="username" name="username" type="text" required autocomplete="username"
         autocapitalize="characters" spellcheck="false">
@@ -355,7 +358,8 @@ ${buildAntiTetheringLines(enableAntiTethering)}
 # Apply login methods + html directory on every profile used by a hotspot
 :foreach hsId in=[/ip hotspot find] do={
   :local p [/ip hotspot get $hsId profile]
-  /ip hotspot profile set $p login-by=http-chap,http-pap,https html-directory=hotspot
+  # Prefer http-pap for captive phone forms (plaintext password). http-chap needs md5.js.
+  /ip hotspot profile set $p login-by=http-pap,https html-directory=hotspot
 }
 /ip hotspot set ${hotspotTarget} disabled=no
 

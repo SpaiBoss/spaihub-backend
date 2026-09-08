@@ -45,7 +45,7 @@ async function verifyLocationOwnership(locationId, ownerId) {
 
 /** Queue MikroTik GRANT_ACCESS so captive PAP login works without cloud redeem. */
 async function provisionVoucherOnRouter(routerId, pkg, voucher) {
-  if (!routerId || !voucher?.code || !voucher?.pin) return;
+  if (!routerId || !voucher?.code || !voucher?.pin || !pkg) return;
   const access = resolvePackageAccessLimits(pkg);
   await mikrotik.grantAccess({
     routerId,
@@ -58,6 +58,47 @@ async function provisionVoucherOnRouter(routerId, pkg, voucher) {
     downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
     sharedUsers: access.sharedUsers,
   });
+}
+
+async function queueUnusedVouchersForLocation(locationId) {
+  const router = await prisma.router.findFirst({
+    where: { locationId, isActive: true },
+    select: { id: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!router) {
+    return { queued: 0, failed: 0, routerId: null, error: 'No active router for this location' };
+  }
+
+  const unused = await prisma.voucher.findMany({
+    where: {
+      locationId,
+      status: 'UNUSED',
+      pin: { not: null },
+    },
+    include: { package: true },
+  });
+
+  const results = await Promise.allSettled(
+    unused.map((voucher) => provisionVoucherOnRouter(router.id, voucher.package, voucher))
+  );
+  const failed = results.filter((r) => r.status === 'rejected').length;
+  if (failed > 0) {
+    logger.warn('Some voucher GRANT_ACCESS commands failed to queue', {
+      locationId,
+      routerId: router.id,
+      failed,
+      total: unused.length,
+    });
+  }
+
+  return {
+    queued: unused.length - failed,
+    failed,
+    total: unused.length,
+    routerId: router.id,
+  };
 }
 
 export async function createVouchers(req, res, next) {
@@ -111,34 +152,8 @@ export async function createVouchers(req, res, next) {
       vouchers.push(voucher);
     }
 
-    if (router) {
-      // Provision this batch and any older UNUSED vouchers still missing on the router.
-      const unusedToProvision = await prisma.voucher.findMany({
-        where: {
-          locationId,
-          status: 'UNUSED',
-          pin: { not: null },
-        },
-        include: {
-          package: true,
-        },
-      });
-
-      const results = await Promise.allSettled(
-        unusedToProvision.map((voucher) =>
-          provisionVoucherOnRouter(router.id, voucher.package || pkg, voucher)
-        )
-      );
-      const failed = results.filter((r) => r.status === 'rejected').length;
-      if (failed > 0) {
-        logger.warn('Some voucher GRANT_ACCESS commands failed to queue', {
-          locationId,
-          routerId: router.id,
-          failed,
-          total: unusedToProvision.length,
-        });
-      }
-    } else {
+    const provision = await queueUnusedVouchersForLocation(locationId);
+    if (provision.error) {
       logger.warn('Vouchers created without active router — captive login will fail until provisioned', {
         locationId,
         count: vouchers.length,
@@ -149,7 +164,34 @@ export async function createVouchers(req, res, next) {
       count: vouchers.length,
       batchLabel: trimmedBatch,
       vouchers,
-      provisionedToRouter: Boolean(router),
+      provisionedToRouter: Boolean(provision.routerId),
+      provision,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Re-queue GRANT_ACCESS for all UNUSED vouchers at a location (safe to run anytime). */
+export async function provisionUnusedVouchers(req, res, next) {
+  try {
+    const { locationId } = req.params;
+    const location = await verifyLocationOwnership(locationId, req.owner.id);
+    if (!location) {
+      return res.status(404).json({ error: 'Location not found' });
+    }
+
+    const result = await queueUnusedVouchersForLocation(locationId);
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({
+      message:
+        result.total === 0
+          ? 'No unused vouchers to sync'
+          : `Queued ${result.queued} voucher${result.queued === 1 ? '' : 's'} for the router`,
+      ...result,
     });
   } catch (err) {
     next(err);

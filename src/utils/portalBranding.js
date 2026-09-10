@@ -87,7 +87,7 @@ export function parseBrandingInput(body) {
   }
 
   if (body.showPlatformCredit !== undefined && body.showPlatformCredit === false) {
-    return { error: 'Removing the platform credit requires a custom agreement. Contact us at spaitrace.com to negotiate.' };
+    return { error: 'Removing the platform credit requires a custom agreement. Contact us at www.spaitrace.com to negotiate.' };
   }
 
   return { data };

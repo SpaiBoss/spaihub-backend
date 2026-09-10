@@ -196,7 +196,7 @@ function drawTicket(doc, voucher, box, assets) {
   });
 
   doc.font('Helvetica').fontSize(5.5).fillColor('#94a3b8');
-  doc.text('Powered by spaitrace.com', innerX, y + h - pad - 10, {
+  doc.text('Powered by www.spaitrace.com', innerX, y + h - pad - 10, {
     width: innerW,
     align: 'center',
   });

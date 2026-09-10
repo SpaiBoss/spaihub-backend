@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getPortal,
   getMikrotikLoginHtml,
+  getMikrotikStatusHtml,
   checkSession,
   logoutSession,
   checkPaymentStatus,
@@ -16,6 +17,7 @@ import {
 const router = Router();
 
 router.get('/:routerToken/mikrotik-login.html', getMikrotikLoginHtml);
+router.get('/:routerToken/mikrotik-status.html', getMikrotikStatusHtml);
 router.get('/:routerToken', getPortal);
 router.get('/:routerToken/session', checkSession);
 router.post('/:routerToken/logout', logoutSession);

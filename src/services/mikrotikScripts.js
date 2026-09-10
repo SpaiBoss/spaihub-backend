@@ -235,6 +235,117 @@ export function buildMikrotikLoginHtmlUrl(routerToken) {
   return `${API_BASE.replace(/\/$/, '')}/portal/${routerToken}/mikrotik-login.html`;
 }
 
+/** Hotspot status page (served from router after login). Keep MikroTik $(…) macros literal. */
+export function buildMikrotikStatusHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+$(if refresh-timeout)
+<meta http-equiv="refresh" content="$(refresh-timeout-secs)">
+$(endif)
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="-1">
+<title>SpaiHub — Connected</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0E141B;color:#fff;padding:1.25rem}
+  .card{width:100%;max-width:22rem;text-align:center}
+  .brand{font-size:1.35rem;margin:0;font-weight:700;letter-spacing:-0.02em}
+  .badge{display:inline-flex;align-items:center;gap:0.4rem;margin:0.85rem 0 0.25rem;
+    padding:0.35rem 0.75rem;border-radius:999px;background:rgba(15,118,110,0.2);
+    color:#5eead4;font-size:0.75rem;font-weight:600;letter-spacing:0.02em}
+  .badge-dot{width:0.45rem;height:0.45rem;border-radius:50%;background:#14b8a6}
+  h1{font-size:1.15rem;margin:0.85rem 0 0.35rem;font-weight:600;letter-spacing:-0.01em}
+  .sub{margin:0 0 1.25rem;opacity:0.65;font-size:0.875rem;line-height:1.45}
+  .stats{text-align:left;border:1px solid #2a3441;border-radius:0.65rem;overflow:hidden;
+    background:#161d27;margin:0 0 1.15rem}
+  .row{display:flex;justify-content:space-between;gap:0.75rem;padding:0.7rem 0.85rem;
+    border-bottom:1px solid #2a3441;font-size:0.85rem}
+  .row:last-child{border-bottom:0}
+  .label{opacity:0.55;flex-shrink:0}
+  .value{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:600;
+    text-align:right;word-break:break-all;color:#e8eef5}
+  a.warn{color:#5eead4;text-decoration:underline}
+  .actions{display:flex;flex-direction:column;gap:0.65rem}
+  button,.btn{display:block;width:100%;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
+    border:0;border-radius:0.5rem;font-weight:600;font-size:1rem;cursor:pointer;text-decoration:none;
+    text-align:center;font-family:inherit}
+  .credit{margin-top:1.25rem;opacity:0.4;font-size:0.7rem}
+  .credit a{color:inherit;text-decoration:none}
+</style>
+<script>
+$(if advert-pending == 'yes')
+  var popup = '';
+  function focusAdvert() {
+    if (window.focus) popup.focus();
+  }
+  function openAdvert() {
+    popup = open('$(link-advert)', 'hotspot_advert', '');
+    setTimeout("focusAdvert()", 1000);
+  }
+$(endif)
+  function openLogout() {
+    if (window.name != 'hotspot_status') return true;
+    open('$(link-logout)', 'hotspot_logout', 'toolbar=0,location=0,directories=0,status=0,menubars=0,resizable=1,width=280,height=250');
+    window.close();
+    return false;
+  }
+</script>
+</head>
+<body $(if advert-pending == 'yes') onLoad="openAdvert()" $(endif)>
+  <div class="card">
+    <p class="brand">SpaiHub</p>
+    <div class="badge"><span class="badge-dot"></span> Online</div>
+
+    $(if login-by == 'trial')
+      <h1>Hi, trial user</h1>
+      <p class="sub">You are connected to this hotspot.</p>
+    $(elif login-by != 'mac')
+      <h1>Hi, $(username)</h1>
+      <p class="sub">You are connected to this hotspot.</p>
+    $(else)
+      <h1>You&apos;re online</h1>
+      <p class="sub">This device is connected to the hotspot.</p>
+    $(endif)
+
+    <div class="stats">
+      <div class="row"><span class="label">IP address</span><span class="value">$(ip)</span></div>
+      <div class="row"><span class="label">Up / down</span><span class="value">$(bytes-in-nice) / $(bytes-out-nice)</span></div>
+      $(if session-time-left)
+      <div class="row"><span class="label">Connected / left</span><span class="value">$(uptime) / $(session-time-left)</span></div>
+      $(else)
+      <div class="row"><span class="label">Connected</span><span class="value">$(uptime)</span></div>
+      $(endif)
+      $(if blocked == 'yes')
+      <div class="row"><span class="label">Status</span><span class="value"><a class="warn" href="$(link-advert)" target="hotspot_advert">Advertisement required</a></span></div>
+      $(elif refresh-timeout)
+      <div class="row"><span class="label">Refresh</span><span class="value">$(refresh-timeout)</span></div>
+      $(endif)
+    </div>
+
+    <form action="$(link-logout)" name="logout" onSubmit="return openLogout()">
+      <div class="actions">
+        $(if login-by-mac != 'yes')
+        <button type="submit">Log out</button>
+        $(endif)
+      </div>
+    </form>
+
+    <p class="credit"><a href="https://www.spaitrace.com">Powered by www.spaitrace.com</a></p>
+  </div>
+</body>
+</html>
+`;
+}
+
+export function buildMikrotikStatusHtmlUrl(routerToken) {
+  return `${API_BASE.replace(/\/$/, '')}/portal/${routerToken}/mikrotik-status.html`;
+}
+
 export function buildChrBootstrapScript(chrConfig = DEFAULT_CHR_CONFIG) {
   const cfg = { ...DEFAULT_CHR_CONFIG, ...chrConfig };
   const bridge = escapeRouterOsString(cfg.bridgeName);
@@ -302,19 +413,17 @@ export function buildChrBootstrapScript(chrConfig = DEFAULT_CHR_CONFIG) {
 }`;
 }
 
-export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = null) {
+function buildSpaiHubHotspotOverlayScript(routerToken, chrConfig = null) {
   const frontendHost = new URL(FRONTEND_URL).host;
   const apiHost = new URL(API_BASE).host;
   const hotspotTarget = chrConfig?.hotspotName
     ? `[find name="${escapeRouterOsString(chrConfig.hotspotName)}"]`
     : '[find]';
   const loginHtmlUrl = buildMikrotikLoginHtmlUrl(routerToken);
+  const statusHtmlUrl = buildMikrotikStatusHtmlUrl(routerToken);
   const mode = fetchMode(loginHtmlUrl);
 
-  return `# SpaiHub hotspot setup (run once on your MikroTik)
-# Requires an existing hotspot server. Verify with: /ip hotspot print
-# RouterOS has no login-url property — redirect is installed as hotspot/login.html
-
+  return `# SpaiHub overlay — walled garden, profiles, captive HTML
 # Allow subscribers to reach SpaiHub portal, API, Campay, and TLS OCSP before login
 # Do not add Google Fonts or OS captive-probe hosts (they break or suppress the portal)
 /ip hotspot walled-garden ip remove [find comment~"spaihub"]
@@ -336,24 +445,134 @@ ${buildRemoveAntiTetheringLines()}
 }
 /ip hotspot set ${hotspotTarget} disabled=no
 
-# Download SpaiHub redirect page into the hotspot HTML directory
+# Download SpaiHub captive pages into the hotspot HTML directory
 /tool fetch url="${loginHtmlUrl}" mode=${mode} dst-path=hotspot/login.html
+/tool fetch url="${statusHtmlUrl}" mode=${mode} dst-path=hotspot/status.html
 
-# If fetch fails, upload login.html via Winbox Files → hotspot/login.html from:
+# If fetch fails, upload via Winbox Files → hotspot/ from:
 # ${loginHtmlUrl}
+# ${statusHtmlUrl}
 
 # Optional: test the portal in a browser (does not need the router):
 # ${buildPreviewPortalUrl(routerToken)}`;
 }
 
+/** Path A — SpaiHub on an existing hotspot (does not create interfaces/DHCP/NAT). */
+export function buildHotspotSetupScript(routerToken, location = {}, chrConfig = null) {
+  return `# SpaiHub hotspot setup — Path A: existing hotspot
+# Prerequisite: a working hotspot (clients get DHCP + captive page). Verify: /ip hotspot print
+# RouterOS has no login-url property — redirect is installed as hotspot/login.html
+
+${buildSpaiHubHotspotOverlayScript(routerToken, chrConfig)}`;
+}
+
+/**
+ * Path B — add-if-missing guest hotspot on lanIf (default ether2), then SpaiHub overlay.
+ * Does not wipe WAN, bridges, or wireless. Skips hotspot create if any hotspot already exists.
+ */
+export function buildPhysicalGuestHotspotBootstrapScript({
+  lanInterface = 'ether2',
+  wanInterface = 'ether1',
+} = {}) {
+  const lanIf = escapeRouterOsString(lanInterface);
+  const wanIf = escapeRouterOsString(wanInterface);
+
+  return `# SpaiHub guest hotspot bootstrap — Path B (add-if-missing only)
+# Edit interfaces if needed. Guest subnet: 10.10.10.0/24 on LAN.
+:local lanIf "${lanIf}"
+:local wanIf "${wanIf}"
+:local gw "10.10.10.1"
+:local poolName "spaihub-hs-pool"
+:local hsName "hotspot1"
+
+# Gateway IP on guest LAN (skip if this interface already has a 10.10.10.x address)
+:if ([:len [/ip address find interface=$lanIf address~"10.10.10."]] = 0) do={
+  /ip address add address=10.10.10.1/24 interface=$lanIf comment=spaihub-guest
+}
+
+# DHCP pool
+:if ([:len [/ip pool find name=$poolName]] = 0) do={
+  /ip pool add name=$poolName ranges=10.10.10.2-10.10.10.254
+}
+
+# DHCP network
+:if ([:len [/ip dhcp-server network find address="10.10.10.0/24"]] = 0) do={
+  /ip dhcp-server network add address=10.10.10.0/24 gateway=$gw dns-server=$gw comment=spaihub-guest
+}
+
+# DHCP server on guest LAN
+:if ([:len [/ip dhcp-server find interface=$lanIf]] = 0) do={
+  /ip dhcp-server add name=$poolName interface=$lanIf address-pool=$poolName disabled=no
+}
+
+# Hotspot server — only if none exist (safe if Path B was chosen by mistake)
+:if ([:len [/ip hotspot find]] = 0) do={
+  /ip hotspot add name=$hsName interface=$lanIf address-pool=$poolName profile=default disabled=no
+}
+
+# Masquerade — only if no srcnat masquerade exists yet
+:if ([:len [/ip firewall nat find chain=srcnat action=masquerade]] = 0) do={
+  /ip firewall nat add chain=srcnat out-interface=$wanIf action=masquerade comment=spaihub-guest-nat
+}`;
+}
+
+export function buildHotspotSetupScriptCreate(routerToken, { lanInterface, wanInterface, chrConfig } = {}) {
+  return `# SpaiHub hotspot setup — Path B: create guest hotspot (add-if-missing) + SpaiHub overlay
+# Defaults: LAN=${lanInterface || 'ether2'} WAN=${wanInterface || 'ether1'} guest 10.10.10.0/24
+# Does not reset WAN, bridges, or wireless.
+
+${buildPhysicalGuestHotspotBootstrapScript({ lanInterface, wanInterface })}
+
+${buildSpaiHubHotspotOverlayScript(routerToken, chrConfig)}`;
+}
+
+const INTERFACE_NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+
+export function normalizePhysicalSetupOptions(options = {}) {
+  const modeRaw = options.physicalSetupMode || options.mode || 'existing';
+  const physicalSetupMode = modeRaw === 'create' ? 'create' : 'existing';
+  const lanInterface = String(options.lanInterface || options.lanIf || 'ether2').trim();
+  const wanInterface = String(options.wanInterface || options.wanIf || 'ether1').trim();
+
+  if (!INTERFACE_NAME_RE.test(lanInterface)) {
+    return { error: 'Invalid LAN interface name' };
+  }
+  if (!INTERFACE_NAME_RE.test(wanInterface)) {
+    return { error: 'Invalid WAN interface name' };
+  }
+
+  return {
+    physicalSetupMode,
+    lanInterface,
+    wanInterface,
+  };
+}
+
 export function buildRouterSetup(routerToken, location = {}, options = {}) {
   const { deploymentType = 'PHYSICAL', chrConfig = null } = options;
+  const physical = normalizePhysicalSetupOptions(options);
+  if (physical.error) {
+    return { error: physical.error };
+  }
+
   const effectiveChrConfig = deploymentType === 'CHR' ? { ...DEFAULT_CHR_CONFIG, ...chrConfig } : null;
-  const hotspotSetupScript = buildHotspotSetupScript(
+
+  const hotspotSetupScriptExisting = buildHotspotSetupScript(
     routerToken,
     location,
     effectiveChrConfig
   );
+  const hotspotSetupScriptCreate = buildHotspotSetupScriptCreate(routerToken, {
+    lanInterface: physical.lanInterface,
+    wanInterface: physical.wanInterface,
+    chrConfig: effectiveChrConfig,
+  });
+
+  const hotspotSetupScript =
+    deploymentType === 'PHYSICAL' && physical.physicalSetupMode === 'create'
+      ? hotspotSetupScriptCreate
+      : hotspotSetupScriptExisting;
+
   const connectionScript = buildConnectionScript(routerToken);
   const chrBootstrapScript =
     deploymentType === 'CHR' ? buildChrBootstrapScript(effectiveChrConfig) : null;
@@ -372,7 +591,12 @@ export function buildRouterSetup(routerToken, location = {}, options = {}) {
     deploymentType,
     chrConfig: effectiveChrConfig,
     chrBootstrapScript,
+    physicalSetupMode: physical.physicalSetupMode,
+    lanInterface: physical.lanInterface,
+    wanInterface: physical.wanInterface,
     hotspotSetupScript,
+    hotspotSetupScriptExisting,
+    hotspotSetupScriptCreate,
     connectionScript,
     portalUrl: buildPortalUrl(routerToken),
     previewPortalUrl: buildPreviewPortalUrl(routerToken),

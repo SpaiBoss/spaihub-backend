@@ -6,6 +6,7 @@ import {
   buildPreviewPortalUrl,
 } from '../services/mikrotikScripts.js';
 import { parseChrConfig, parseDeploymentType } from '../utils/chrConfig.js';
+import { clearRouterOfflineNotifications } from '../services/ownerNotify.js';
 
 const ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -65,9 +66,16 @@ function resolveSetupOptions(router, req) {
   if (override?.error) return { error: override.error };
 
   const chrConfig = override?.data ?? router.chrConfig ?? null;
+  const mode = req.query.mode || req.query.physicalSetupMode || 'existing';
+  const lanIf = req.query.lanIf || req.query.lanInterface;
+  const wanIf = req.query.wanIf || req.query.wanInterface;
+
   return {
     deploymentType: router.deploymentType,
     chrConfig,
+    physicalSetupMode: mode === 'create' ? 'create' : 'existing',
+    lanInterface: lanIf || 'ether2',
+    wanInterface: wanIf || 'ether1',
   };
 }
 
@@ -206,9 +214,14 @@ export async function getRouterSetupScript(req, res, next) {
       return res.status(400).json({ error: options.error });
     }
 
+    const setup = buildRouterSetup(verified.router.routerToken, verified.location, options);
+    if (setup.error) {
+      return res.status(400).json({ error: setup.error });
+    }
+
     res.json({
       router: withPortalMeta(verified.router),
-      ...buildRouterSetup(verified.router.routerToken, verified.location, options),
+      ...setup,
     });
   } catch (err) {
     next(err);
@@ -281,10 +294,14 @@ export async function deleteRouter(req, res, next) {
 
 export async function routerHeartbeat(req, res, next) {
   try {
+    const wasOffline = req.router.status === 'OFFLINE' || req.router.status === 'DEGRADED';
     await prisma.router.update({
       where: { id: req.router.id },
       data: { lastSeenAt: new Date(), status: 'ONLINE' },
     });
+    if (wasOffline) {
+      clearRouterOfflineNotifications(req.router.id).catch(() => {});
+    }
     res.json({ status: 'ok' });
   } catch (err) {
     next(err);

@@ -4,7 +4,7 @@ import * as mikrotik from '../services/mikrotik.js';
 import { completePaidSession } from '../services/session.js';
 import { findActiveSession, sessionResponse, syncSessionIdentity } from '../services/portalSession.js';
 import { endHotspotSession } from '../services/sessionLifecycle.js';
-import { buildMikrotikLoginHtml } from '../services/mikrotikScripts.js';
+import { buildMikrotikLoginHtml, buildMikrotikStatusHtml } from '../services/mikrotikScripts.js';
 import { isValidDeviceId, normalizeMac } from '../utils/deviceId.js';
 import { normalizeCameroonMobileLocal, toCampayPhone } from '../utils/phone.js';
 import {
@@ -133,6 +133,24 @@ export async function getMikrotikLoginHtml(req, res, next) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.send(buildMikrotikLoginHtml(routerToken));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Branded hotspot/status.html (fetched by setup script; MikroTik substitutes macros). */
+export async function getMikrotikStatusHtml(req, res, next) {
+  try {
+    const { routerToken } = req.params;
+    const router = await loadPortalRouter(routerToken);
+    const accessError = portalAccessError(router);
+    if (accessError) {
+      return res.status(accessError.status).type('text/plain').send(accessError.error);
+    }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buildMikrotikStatusHtml());
   } catch (err) {
     next(err);
   }

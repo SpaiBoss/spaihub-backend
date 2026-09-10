@@ -6,7 +6,6 @@ import {
   buildPreviewPortalUrl,
 } from '../services/mikrotikScripts.js';
 import { parseChrConfig, parseDeploymentType } from '../utils/chrConfig.js';
-import { clearRouterOfflineNotifications } from '../services/ownerNotify.js';
 
 const ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -294,14 +293,10 @@ export async function deleteRouter(req, res, next) {
 
 export async function routerHeartbeat(req, res, next) {
   try {
-    const wasOffline = req.router.status === 'OFFLINE' || req.router.status === 'DEGRADED';
     await prisma.router.update({
       where: { id: req.router.id },
       data: { lastSeenAt: new Date(), status: 'ONLINE' },
     });
-    if (wasOffline) {
-      clearRouterOfflineNotifications(req.router.id).catch(() => {});
-    }
     res.json({ status: 'ok' });
   } catch (err) {
     next(err);

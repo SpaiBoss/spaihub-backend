@@ -52,3 +52,29 @@ export async function authenticateAdmin(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
+
+export async function authenticateContributor(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const token = authHeader.slice(7);
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (payload.role !== 'contributor') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    const contributor = await prisma.contributor.findUnique({ where: { id: payload.id } });
+    if (!contributor || contributor.status !== 'ACTIVE') {
+      return res.status(401).json({ error: 'Invalid or inactive account' });
+    }
+
+    req.contributor = contributor;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}

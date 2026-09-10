@@ -30,6 +30,7 @@ import {
   exportTransactions,
 } from '../controllers/transactionController.js';
 import { getWallet, requestWithdrawal } from '../controllers/walletController.js';
+import { getOwnerContributorLinks } from '../controllers/ownerContributorController.js';
 import {
   createVouchers,
   provisionUnusedVouchers,
@@ -87,6 +88,7 @@ router.get('/reports/accounting', exportOwnerAccountingReport);
 
 router.get('/wallet', getWallet);
 router.post('/wallet/withdraw', requestWithdrawal);
+router.get('/contributor-links', getOwnerContributorLinks);
 
 router.get('/vouchers', getVouchers);
 router.get('/vouchers/stats', getVoucherStats);

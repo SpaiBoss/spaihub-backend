@@ -51,6 +51,42 @@ export async function sendVerificationEmail(email, token) {
   });
 }
 
+export async function sendContributorVerificationEmail(email, token) {
+  const verifyUrl = `${process.env.FRONTEND_URL}/contributor/verify-email?token=${token}`;
+
+  await transporter.sendMail({
+    from: process.env.SMTP_USER,
+    to: email,
+    subject: 'Verify your SpaiHub contributor account',
+    html: baseTemplate(
+      'Verify your email',
+      `<p>Welcome to SpaiHub Contributors. Please verify your email. After that, a SpaiHub admin will approve your account before you can sign in.</p>
+       <p style="text-align: center; margin: 32px 0;">
+         <a href="${verifyUrl}" style="background: #0F766E; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Verify Email</a>
+       </p>
+       <p style="color: #64748b; font-size: 14px;">If the button doesn't work, copy this link: ${verifyUrl}</p>`
+    ),
+  });
+}
+
+export async function sendContributorPasswordResetEmail(email, token) {
+  const resetUrl = `${process.env.FRONTEND_URL}/contributor/reset-password?token=${token}`;
+
+  await transporter.sendMail({
+    from: process.env.SMTP_USER,
+    to: email,
+    subject: 'Reset your SpaiHub contributor password',
+    html: baseTemplate(
+      'Reset your password',
+      `<p>We received a request to reset your contributor password. This link expires in 1 hour.</p>
+       <p style="text-align: center; margin: 32px 0;">
+         <a href="${resetUrl}" style="background: #0F766E; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Reset Password</a>
+       </p>
+       <p style="color: #64748b; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>`
+    ),
+  });
+}
+
 export async function sendPasswordResetEmail(email, token) {
   const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
@@ -86,5 +122,23 @@ export async function sendWithdrawalStatusEmail(email, { amountXaf, status, admi
     to: email,
     subject,
     html: baseTemplate(subject, body),
+  });
+}
+
+export async function sendOwnerNotificationEmail(email, { title, body }) {
+  const safeTitle = String(title || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const safeBody = String(body || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  await transporter.sendMail({
+    from: process.env.SMTP_USER,
+    to: email,
+    subject: title,
+    html: baseTemplate(safeTitle, `<p>${safeBody}</p>`),
   });
 }

@@ -85,6 +85,32 @@ enum WalletLedgerType {
   WITHDRAWAL_DEBIT
   WITHDRAWAL_REFUND
   ADMIN_ADJUSTMENT
+  CONTRIBUTOR_PAYOUT_DEBIT
+  CONTRIBUTOR_PAYOUT_REFUND
+}
+
+enum ContributorLinkStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+enum ContributorMeterSource {
+  ADMIN
+}
+
+enum ContributorAccrualStatus {
+  OPEN
+  PAID
+  VOID
+}
+
+enum ContributorWalletLedgerType {
+  CONTRIBUTION_CREDIT
+  WITHDRAWAL_DEBIT
+  WITHDRAWAL_REFUND
+  ADMIN_ADJUSTMENT
 }
 
 model Owner {
@@ -107,10 +133,11 @@ model Owner {
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
-  locations    Location[]
-  transactions Transaction[]
-  withdrawals  Withdrawal[]
-  ledgerEntries WalletLedgerEntry[]
+  locations           Location[]
+  transactions        Transaction[]
+  withdrawals         Withdrawal[]
+  ledgerEntries       WalletLedgerEntry[]
+  contributorAccruals ContributorAccrual[]
 }
 
 model Location {
@@ -125,11 +152,12 @@ model Location {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
-  owner        Owner         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  routers      Router[]
-  packages     Package[]
-  transactions Transaction[]
-  vouchers     Voucher[]
+  owner            Owner             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  routers           Router[]
+  packages          Package[]
+  transactions      Transaction[]
+  vouchers          Voucher[]
+  contributorLinks  ContributorLink[]
 }
 
 model Router {
@@ -147,10 +175,11 @@ model Router {
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
-  location     Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
-  commands     RouterCommand[]
-  vouchers     Voucher[]
+  location         Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  commands         RouterCommand[]
+  vouchers         Voucher[]
+  contributorLinks ContributorLink[]
 }
 
 model Package {
@@ -310,4 +339,115 @@ model Voucher {
 
   @@index([locationId, status])
   @@index([code])
+}
+
+model Contributor {
+  id                  String      @id @default(uuid())
+  name                String
+  email               String      @unique
+  passwordHash        String
+  walletBalance       Decimal     @default(0) @db.Decimal(12, 2)
+  status              OwnerStatus @default(PENDING)
+  emailVerified       Boolean     @default(false)
+  emailVerifyToken    String?
+  resetPasswordToken  String?
+  resetPasswordExpiry DateTime?
+  momoPhone           String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  links         ContributorLink[]
+  withdrawals   ContributorWithdrawal[]
+  ledgerEntries ContributorWalletLedgerEntry[]
+}
+
+model ContributorLink {
+  id             String                @id @default(uuid())
+  contributorId  String
+  locationId     String
+  routerId       String?
+  interfaceName  String
+  capMbps        Int
+  rateXafPerGb   Int
+  status         ContributorLinkStatus @default(PENDING)
+  notes          String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  contributor Contributor              @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  location    Location                 @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  router      Router?                  @relation(fields: [routerId], references: [id], onDelete: SetNull)
+  meters      ContributorMeterSample[]
+  accruals    ContributorAccrual[]
+
+  @@index([contributorId, status])
+  @@index([locationId])
+  @@index([routerId, interfaceName])
+}
+
+model ContributorMeterSample {
+  id          String                 @id @default(uuid())
+  linkId      String
+  bytesTotal  BigInt
+  recordedAt  DateTime               @default(now())
+  source      ContributorMeterSource @default(ADMIN)
+  createdAt   DateTime               @default(now())
+
+  link ContributorLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId, recordedAt])
+}
+
+model ContributorAccrual {
+  id           String                   @id @default(uuid())
+  linkId       String
+  ownerId      String
+  bytes        BigInt
+  amountXaf    Int
+  status       ContributorAccrualStatus @default(OPEN)
+  periodStart  DateTime
+  periodEnd    DateTime
+  withdrawalId String?
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+
+  link       ContributorLink         @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  owner      Owner                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  withdrawal ContributorWithdrawal?  @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, status])
+  @@index([linkId, status])
+  @@index([withdrawalId])
+}
+
+model ContributorWithdrawal {
+  id              String           @id @default(uuid())
+  contributorId   String
+  amountXaf       Int
+  phoneNumber     String
+  method          PaymentMethod
+  status          WithdrawalStatus @default(PENDING)
+  adminNote       String?
+  campayReference String?          @unique
+  idempotencyKey  String?          @unique
+  createdAt       DateTime         @default(now())
+  processedAt     DateTime?
+
+  contributor Contributor         @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  accruals    ContributorAccrual[]
+}
+
+model ContributorWalletLedgerEntry {
+  id              String                     @id @default(uuid())
+  contributorId   String
+  type            ContributorWalletLedgerType
+  amountXaf       Int
+  balanceAfterXaf Decimal                    @db.Decimal(12, 2)
+  referenceId     String?
+  note            String?
+  createdAt       DateTime                   @default(now())
+
+  contributor Contributor @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+
+  @@index([contributorId, createdAt])
 }

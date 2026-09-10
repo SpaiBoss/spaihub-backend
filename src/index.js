@@ -12,6 +12,7 @@ import portalRoutes from './routes/portal.js';
 import routerRoutes from './routes/router.js';
 import adminRoutes from './routes/admin.js';
 import publicRoutes from './routes/public.js';
+import { contributorAuthRoutes, contributorApiRoutes } from './routes/contributor.js';
 import { campayWebhook } from './controllers/portalController.js';
 import { openwaWebhook } from './controllers/openwaWebhookController.js';
 import { serveOwnerLogo } from './controllers/mediaController.js';
@@ -105,6 +106,8 @@ app.get('/health', (req, res) => {
 
 app.use('/api/public', publicRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/contributor/auth', contributorAuthRoutes);
+app.use('/api/contributor', contributorApiRoutes);
 app.use('/api/owner', ownerRoutes);
 app.use('/portal/:routerToken/pay', portalPayLimiter);
 app.use('/portal/:routerToken/redeem', portalPayLimiter);

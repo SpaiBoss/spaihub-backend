@@ -12,6 +12,7 @@ import {
   isAutoDisburseEnabled,
 } from '../services/withdrawalDisbursement.js';
 import { recordLedgerEntry } from '../services/walletLedger.js';
+import { getOwnerAvailableXaf } from '../services/contributorReserve.js';
 
 const MIN_WITHDRAWAL = 100;
 
@@ -38,7 +39,7 @@ export async function getWallet(req, res, next) {
     const limit = 20;
     const skip = (page - 1) * limit;
 
-    const [owner, withdrawals, total] = await Promise.all([
+    const [owner, withdrawals, total, availability] = await Promise.all([
       prisma.owner.findUnique({
         where: { id: req.owner.id },
         select: { walletBalance: true },
@@ -50,10 +51,13 @@ export async function getWallet(req, res, next) {
         take: limit,
       }),
       prisma.withdrawal.count({ where: { ownerId: req.owner.id } }),
+      getOwnerAvailableXaf(req.owner.id),
     ]);
 
     res.json({
       walletBalance: Number(owner.walletBalance),
+      contributorReservedXaf: availability.contributorReservedXaf,
+      availableXaf: availability.availableXaf,
       withdrawals,
       pagination: {
         page,
@@ -112,6 +116,18 @@ export async function requestWithdrawal(req, res, next) {
     let withdrawal;
     try {
       withdrawal = await prisma.$transaction(async (tx) => {
+        const availability = await getOwnerAvailableXaf(req.owner.id, tx);
+        if (availability.availableXaf < Number(amountXaf)) {
+          throw Object.assign(
+            new Error(
+              availability.contributorReservedXaf > 0
+                ? `Insufficient available balance. ${availability.contributorReservedXaf.toLocaleString()} XAF is reserved for contributors.`
+                : 'Insufficient wallet balance'
+            ),
+            { statusCode: 400 }
+          );
+        }
+
         const debited = await tx.owner.updateMany({
           where: {
             id: req.owner.id,
@@ -122,6 +138,15 @@ export async function requestWithdrawal(req, res, next) {
 
         if (debited.count === 0) {
           throw Object.assign(new Error('Insufficient wallet balance'), { statusCode: 400 });
+        }
+
+        // Re-check reserve after debit race
+        const after = await getOwnerAvailableXaf(req.owner.id, tx);
+        if (after.availableXaf < 0) {
+          throw Object.assign(
+            new Error('Insufficient available balance after contributor reserve'),
+            { statusCode: 400 }
+          );
         }
 
         const created = await tx.withdrawal.create({

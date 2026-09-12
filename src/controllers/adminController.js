@@ -8,7 +8,10 @@ import {
 } from '../services/withdrawalDisbursement.js';
 import { detectCameroonOperator, toCampayPhone } from '../utils/phone.js';
 import { parseTransactionFilters } from '../utils/queryValidation.js';
-import { kickAllActiveSessionsForOwner } from '../services/sessionLifecycle.js';
+import {
+  kickAllActiveSessionsForOwner,
+  kickAllActiveSessionsForLocation,
+} from '../services/sessionLifecycle.js';
 import { countDeadLetterCommands } from '../services/routerCommandService.js';
 import { processCampayStatus } from '../controllers/portalController.js';
 import { normalizeCampayStatus } from '../utils/pendingPayment.js';
@@ -588,6 +591,261 @@ export async function reconcilePayment(req, res, next) {
           ? 'Payment recovered and session created'
           : 'Campay status applied',
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listManagedLocations(req, res, next) {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+    const q = String(req.query.q || '').trim();
+    const activeFilter = req.query.isActive;
+
+    const where = {};
+    if (activeFilter === 'true') where.isActive = true;
+    if (activeFilter === 'false') where.isActive = false;
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { address: { contains: q, mode: 'insensitive' } },
+        { owner: { name: { contains: q, mode: 'insensitive' } } },
+        { owner: { email: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      prisma.location.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          owner: { select: { id: true, name: true, email: true, status: true } },
+          routers: { select: { id: true, name: true, status: true, isActive: true } },
+          _count: {
+            select: {
+              packages: true,
+              transactions: true,
+              vouchers: true,
+              contributorLinks: true,
+            },
+          },
+        },
+      }),
+      prisma.location.count({ where }),
+    ]);
+
+    res.json({
+      locations: rows.map((loc) => ({
+        id: loc.id,
+        name: loc.name,
+        address: loc.address,
+        isActive: loc.isActive,
+        createdAt: loc.createdAt,
+        owner: loc.owner,
+        routerCount: loc.routers.length,
+        onlineRouters: loc.routers.filter((r) => r.isActive && r.status === 'ONLINE').length,
+        packageCount: loc._count.packages,
+        transactionCount: loc._count.transactions,
+        voucherCount: loc._count.vouchers,
+        contributorLinkCount: loc._count.contributorLinks,
+        canHardDelete:
+          loc._count.transactions === 0 &&
+          loc._count.vouchers === 0 &&
+          loc._count.contributorLinks === 0,
+      })),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getManagedLocation(req, res, next) {
+  try {
+    const location = await prisma.location.findUnique({
+      where: { id: req.params.id },
+      include: {
+        owner: { select: { id: true, name: true, email: true, status: true } },
+        routers: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            isActive: true,
+            lastSeenAt: true,
+            deploymentType: true,
+          },
+        },
+        packages: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            durationMinutes: true,
+            priceXaf: true,
+            dataCapMb: true,
+            isActive: true,
+            _count: { select: { transactions: true, vouchers: true } },
+          },
+        },
+        _count: {
+          select: { transactions: true, vouchers: true, contributorLinks: true },
+        },
+      },
+    });
+
+    if (!location) {
+      return res.status(404).json({ error: 'Location not found' });
+    }
+
+    res.json({
+      ...location,
+      packages: location.packages.map((p) => ({
+        ...p,
+        transactionCount: p._count.transactions,
+        voucherCount: p._count.vouchers,
+        canHardDelete: p._count.transactions === 0 && p._count.vouchers === 0,
+        _count: undefined,
+      })),
+      canHardDelete:
+        location._count.transactions === 0 &&
+        location._count.vouchers === 0 &&
+        location._count.contributorLinks === 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateManagedLocationStatus(req, res, next) {
+  try {
+    const { isActive } = req.body;
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ error: 'isActive boolean is required' });
+    }
+
+    const location = await prisma.location.findUnique({ where: { id: req.params.id } });
+    if (!location) {
+      return res.status(404).json({ error: 'Location not found' });
+    }
+
+    const wasActive = location.isActive;
+    const [updated] = await prisma.$transaction([
+      prisma.location.update({
+        where: { id: location.id },
+        data: { isActive },
+      }),
+      ...(isActive === false
+        ? [
+            prisma.router.updateMany({
+              where: { locationId: location.id },
+              data: { isActive: false },
+            }),
+            prisma.package.updateMany({
+              where: { locationId: location.id },
+              data: { isActive: false },
+            }),
+          ]
+        : []),
+    ]);
+
+    if (isActive === false && wasActive) {
+      await kickAllActiveSessionsForLocation(location.id);
+    }
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteManagedLocation(req, res, next) {
+  try {
+    const location = await prisma.location.findUnique({
+      where: { id: req.params.id },
+      include: {
+        _count: {
+          select: { transactions: true, vouchers: true, contributorLinks: true },
+        },
+      },
+    });
+
+    if (!location) {
+      return res.status(404).json({ error: 'Location not found' });
+    }
+
+    if (
+      location._count.transactions > 0 ||
+      location._count.vouchers > 0 ||
+      location._count.contributorLinks > 0
+    ) {
+      return res.status(409).json({
+        error:
+          'Cannot permanently delete a location with transactions, vouchers, or contributor links. Deactivate it instead.',
+        transactionCount: location._count.transactions,
+        voucherCount: location._count.vouchers,
+        contributorLinkCount: location._count.contributorLinks,
+      });
+    }
+
+    await kickAllActiveSessionsForLocation(location.id);
+    await prisma.location.delete({ where: { id: location.id } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateManagedPackageStatus(req, res, next) {
+  try {
+    const { isActive } = req.body;
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ error: 'isActive boolean is required' });
+    }
+
+    const existing = await prisma.package.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Package not found' });
+    }
+
+    const updated = await prisma.package.update({
+      where: { id: existing.id },
+      data: { isActive },
+    });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteManagedPackage(req, res, next) {
+  try {
+    const existing = await prisma.package.findUnique({
+      where: { id: req.params.id },
+      include: { _count: { select: { transactions: true, vouchers: true } } },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Package not found' });
+    }
+
+    if (existing._count.transactions > 0 || existing._count.vouchers > 0) {
+      return res.status(409).json({
+        error:
+          'Cannot permanently delete a package with transactions or vouchers. Deactivate it instead.',
+        transactionCount: existing._count.transactions,
+        voucherCount: existing._count.vouchers,
+      });
+    }
+
+    await prisma.package.delete({ where: { id: existing.id } });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

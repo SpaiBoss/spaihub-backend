@@ -12,6 +12,12 @@ import {
   verifyWithdrawalCampay,
   activateOwner,
   reconcilePayment,
+  listManagedLocations,
+  getManagedLocation,
+  updateManagedLocationStatus,
+  deleteManagedLocation,
+  updateManagedPackageStatus,
+  deleteManagedPackage,
 } from '../controllers/adminController.js';
 import { exportAdminAccountingReport } from '../controllers/reportsController.js';
 import {
@@ -48,7 +54,15 @@ router.post('/withdrawals/:id/process', processWithdrawal);
 router.get('/contributors', listContributors);
 router.post('/contributors/:id/activate', activateContributor);
 router.patch('/contributors/:id/status', updateContributorStatus);
+/** Thin list for contributor-link dropdowns */
 router.get('/locations', listAdminLocations);
+/** Paginated ops list + detail / status / delete */
+router.get('/managed-locations', listManagedLocations);
+router.get('/managed-locations/:id', getManagedLocation);
+router.patch('/managed-locations/:id/status', updateManagedLocationStatus);
+router.delete('/managed-locations/:id', deleteManagedLocation);
+router.patch('/packages/:id/status', updateManagedPackageStatus);
+router.delete('/packages/:id', deleteManagedPackage);
 router.get('/contributor-links', listContributorLinks);
 router.post('/contributor-links', createContributorLink);
 router.get('/contributor-links/:id', getContributorLink);

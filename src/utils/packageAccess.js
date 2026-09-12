@@ -13,11 +13,22 @@ export function normalizeMaxSharedDevices(value) {
   return Math.min(20, Math.round(n));
 }
 
+/**
+ * MAC cookie lifetime in minutes: never shorter than 15m, never longer than
+ * the paid session window, and never longer than 1 day.
+ */
+export function resolveMacCookieMinutes(sessionMinutes) {
+  const session = Math.max(0, Number(sessionMinutes) || 0);
+  if (session <= 0) return 60;
+  return Math.min(24 * 60, Math.max(15, Math.round(session)));
+}
+
 export function resolvePackageAccessLimits(pkg) {
   const sessionMinutes = Number(pkg.durationMinutes) || 0;
   const uploadSpeedMbPerSec = Number(pkg.uploadSpeedMbPerSec) || 1;
   const downloadSpeedMbPerSec = getPlatformDownloadSpeedMbPerSec();
   const sharedUsers = normalizeMaxSharedDevices(pkg.maxSharedDevices);
+  const macCookieMinutes = resolveMacCookieMinutes(sessionMinutes);
   const type = pkg.type || 'TIME_BASED';
 
   if (type === 'DATA_BASED') {
@@ -28,6 +39,7 @@ export function resolvePackageAccessLimits(pkg) {
       uploadSpeedMbPerSec,
       downloadSpeedMbPerSec,
       sharedUsers,
+      macCookieMinutes,
       applyByteLimit: !!(pkg.dataCapMb && pkg.dataCapMb > 0),
     };
   }
@@ -42,6 +54,7 @@ export function resolvePackageAccessLimits(pkg) {
     uploadSpeedMbPerSec,
     downloadSpeedMbPerSec,
     sharedUsers,
+    macCookieMinutes,
     applyByteLimit: optionalCap != null,
   };
 }

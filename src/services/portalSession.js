@@ -1,7 +1,31 @@
 import prisma from '../utils/prisma.js';
-import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
+import { resolvePackageAccessLimits, normalizeMaxSharedDevices } from '../utils/packageAccess.js';
 import { normalizeMac } from '../utils/deviceId.js';
 import { normalizeCameroonMobileLocal } from '../utils/phone.js';
+import * as mikrotik from './mikrotik.js';
+import logger from '../utils/logger.js';
+
+const sessionSelect = {
+  id: true,
+  deviceId: true,
+  sessionEnd: true,
+  sessionStart: true,
+  subscriberMac: true,
+  subscriberPhone: true,
+  routerId: true,
+  hotspotUsername: true,
+  hotspotPin: true,
+  macBindCount: true,
+  package: {
+    select: {
+      name: true,
+      type: true,
+      dataCapMb: true,
+      durationMinutes: true,
+      maxSharedDevices: true,
+    },
+  },
+};
 
 export async function findActiveSession(routerId, { deviceId, phone, mac }) {
   const now = new Date();
@@ -9,27 +33,6 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
     routerId,
     status: 'SUCCESS',
     sessionEnd: { gt: now },
-  };
-
-  const sessionSelect = {
-    id: true,
-    deviceId: true,
-    sessionEnd: true,
-    sessionStart: true,
-    subscriberMac: true,
-    subscriberPhone: true,
-    routerId: true,
-    hotspotUsername: true,
-    hotspotPin: true,
-    package: {
-      select: {
-        name: true,
-        type: true,
-        dataCapMb: true,
-        durationMinutes: true,
-        maxSharedDevices: true,
-      },
-    },
   };
 
   if (deviceId) {
@@ -64,7 +67,10 @@ export async function findActiveSession(routerId, { deviceId, phone, mac }) {
   return null;
 }
 
-/** Keep portal device id and MAC in sync when phones rotate MAC addresses or browsers reset storage. */
+/**
+ * Keep portal device id and MAC in sync when phones rotate MAC addresses or browsers reset storage.
+ * Single-device sessions: allow one MikroTik MAC rebind (macBindCount < 2).
+ */
 export async function syncSessionIdentity(session, { deviceId, mac } = {}) {
   if (!session?.id) return session;
 
@@ -75,38 +81,50 @@ export async function syncSessionIdentity(session, { deviceId, mac } = {}) {
   if (nextDeviceId && nextDeviceId !== session.deviceId) {
     updates.deviceId = nextDeviceId;
   }
-  if (nextMac && nextMac !== session.subscriberMac) {
+
+  const macChanged = Boolean(nextMac && nextMac !== session.subscriberMac);
+  if (macChanged) {
     updates.subscriberMac = nextMac;
+  }
+
+  const sharedUsers = normalizeMaxSharedDevices(session.package?.maxSharedDevices);
+  const canRebind =
+    macChanged &&
+    sharedUsers === 1 &&
+    session.hotspotUsername &&
+    session.routerId &&
+    (session.macBindCount ?? 0) < 2;
+
+  if (canRebind) {
+    updates.macBindCount = (session.macBindCount ?? 0) + 1;
   }
 
   if (Object.keys(updates).length === 0) {
     return session;
   }
 
-  return prisma.transaction.update({
+  const updated = await prisma.transaction.update({
     where: { id: session.id },
     data: updates,
-    select: {
-      id: true,
-      deviceId: true,
-      sessionEnd: true,
-      sessionStart: true,
-      subscriberMac: true,
-      subscriberPhone: true,
-      routerId: true,
-      hotspotUsername: true,
-      hotspotPin: true,
-      package: {
-        select: {
-          name: true,
-          type: true,
-          dataCapMb: true,
-          durationMinutes: true,
-          maxSharedDevices: true,
-        },
-      },
-    },
+    select: sessionSelect,
   });
+
+  if (canRebind) {
+    try {
+      await mikrotik.rebindMac({
+        routerId: session.routerId,
+        username: session.hotspotUsername,
+        macAddress: nextMac,
+      });
+    } catch (err) {
+      logger.warn('MAC rebind queue failed', {
+        transactionId: session.id,
+        error: err.message,
+      });
+    }
+  }
+
+  return updated;
 }
 
 export function sessionResponse(session) {

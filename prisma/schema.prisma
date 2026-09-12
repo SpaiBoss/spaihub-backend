@@ -53,6 +53,7 @@ enum RouterCommandType {
   GRANT_ACCESS
   KICK_USER
   UPDATE_ACCESS_POLICY
+  REBIND_MAC
 }
 
 enum RouterCommandStatus {
@@ -172,6 +173,8 @@ model Router {
   chrConfig             Json?
   onboardingCompletedAt DateTime?
   isActive              Boolean        @default(true)
+  hotspotActiveSnapshot Json?
+  hotspotActiveAt       DateTime?
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
@@ -221,6 +224,7 @@ model Transaction {
   sessionStart     DateTime?
   sessionEnd       DateTime?
   kickedAt         DateTime?
+  macBindCount     Int               @default(0)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 

@@ -64,6 +64,22 @@ export function commandToRouterOs(cmd) {
 
   const safeUsername = escapeRouterOsString(username);
 
+  if (cmd.type === 'REBIND_MAC') {
+    const macAddress = cmd.payload?.macAddress;
+    if (!macAddress) {
+      return `# SpaiHub REBIND_MAC ${cmd.id}: missing macAddress`;
+    }
+    const safeMac = escapeRouterOsString(macAddress);
+    return [
+      `# SpaiHub REBIND_MAC ${cmd.id}`,
+      `:local username "${safeUsername}"`,
+      `:local mac "${safeMac}"`,
+      `/ip hotspot user set [find name=$username comment~"spaihub"] mac-address=$mac`,
+      `/ip hotspot active remove [find user=$username]`,
+      `/ip hotspot cookie remove [find user=$username]`,
+    ].join('\n');
+  }
+
   if (cmd.type === 'KICK_USER') {
     const macAddress = cmd.payload?.macAddress;
     const safeMac = macAddress ? escapeRouterOsString(macAddress) : null;
@@ -93,15 +109,25 @@ export function commandToRouterOs(cmd) {
   if (cmd.type === 'GRANT_ACCESS') {
     const timeout = formatMikrotikTimeout(cmd.payload.sessionMinutes);
     const sharedUsers = Math.max(1, Number(cmd.payload.sharedUsers) || 1);
+    const cookieMinutes = Math.max(
+      15,
+      Math.min(24 * 60, Number(cmd.payload.macCookieMinutes) || Number(cmd.payload.sessionMinutes) || 60)
+    );
+    const cookieTimeout = formatMikrotikTimeout(cookieMinutes);
     const rateLimit = buildMikrotikRateLimit(
       cmd.payload.uploadSpeedMbPerSec,
       cmd.payload.downloadSpeedMbPerSec
     );
-    const profile = `spaihub-${sharedUsers}`;
+    const profile = `spaihub-s${sharedUsers}-c${cookieMinutes}`;
     const byteLimit = resolveByteLimit(cmd.payload);
     const limitBytesLine = byteLimit
       ? ` limit-bytes-total=${byteLimit}`
       : '';
+    const bindMac =
+      sharedUsers === 1 && cmd.payload?.macAddress
+        ? escapeRouterOsString(cmd.payload.macAddress)
+        : null;
+    const macAddressLine = bindMac ? ` mac-address="${bindMac}"` : '';
 
     return [
       `# SpaiHub GRANT_ACCESS ${cmd.id}`,
@@ -109,13 +135,13 @@ export function commandToRouterOs(cmd) {
       `:local password "${safePassword}"`,
       `:local profile "${profile}"`,
       `:if ([:len [/ip hotspot user profile find name=$profile]] = 0) do={`,
-      `  /ip hotspot user profile add name=$profile shared-users=${sharedUsers} mac-cookie-timeout=1d rate-limit="${rateLimit}"`,
+      `  /ip hotspot user profile add name=$profile shared-users=${sharedUsers} mac-cookie-timeout=${cookieTimeout} rate-limit="${rateLimit}"`,
       `} else={`,
-      `  /ip hotspot user profile set [find name=$profile] shared-users=${sharedUsers} rate-limit="${rateLimit}"`,
+      `  /ip hotspot user profile set [find name=$profile] shared-users=${sharedUsers} mac-cookie-timeout=${cookieTimeout} rate-limit="${rateLimit}"`,
       `}`,
       `/ip hotspot user remove [find name=$username comment~"spaihub"]`,
       `/ip hotspot active remove [find user=$username]`,
-      `/ip hotspot user add name=$username password=$password profile=$profile comment=spaihub limit-uptime=${timeout}${limitBytesLine}`,
+      `/ip hotspot user add name=$username password=$password profile=$profile comment=spaihub limit-uptime=${timeout}${limitBytesLine}${macAddressLine}`,
     ].join('\n');
   }
 
@@ -137,8 +163,10 @@ export function buildConnectionScript(routerToken) {
 
 /system scheduler remove [find name=spaihub-heartbeat]
 /system scheduler remove [find name=spaihub-commands]
+/system scheduler remove [find name=spaihub-hotspot-active]
 /system script remove [find name=spaihub-heartbeat]
 /system script remove [find name=spaihub-commands]
+/system script remove [find name=spaihub-hotspot-active]
 
 /system script add name=spaihub-heartbeat source={
 :local token "${routerToken}"
@@ -162,8 +190,22 @@ export function buildConnectionScript(routerToken) {
 }
 }
 
+/system script add name=spaihub-hotspot-active source={
+:local token "${routerToken}"
+:local api "${API_BASE}/api/router/hotspot-active"
+:local hdr ("X-Router-Token: " . $token . ",Content-Type: text/plain")
+:local body ""
+:foreach i in=[/ip hotspot active find] do={
+:local u [/ip hotspot active get $i user]
+:local m [/ip hotspot active get $i mac-address]
+:set body ($body . $u . "," . $m . ";")
+}
+/tool fetch url=$api http-method=post http-header-field=$hdr http-data=$body mode=${mode} keep-result=no
+}
+
 /system scheduler add name=spaihub-heartbeat interval=1m on-event="/system script run spaihub-heartbeat"
-/system scheduler add name=spaihub-commands interval=15s on-event="/system script run spaihub-commands"`;
+/system scheduler add name=spaihub-commands interval=15s on-event="/system script run spaihub-commands"
+/system scheduler add name=spaihub-hotspot-active interval=2m on-event="/system script run spaihub-hotspot-active"`;
 }
 
 function buildProfileSetupLines() {

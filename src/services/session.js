@@ -2,7 +2,6 @@ import * as mikrotik from './mikrotik.js';
 import { generateHotspotPin, normalizeHotspotUsername } from '../utils/hotspotCredentials.js';
 import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
 import { recordLedgerEntry } from './walletLedger.js';
-import { logMetric } from './walletLedger.js';
 
 export async function completePaidSession(tx, { transaction, pkg, routerId, location }) {
   const now = new Date();
@@ -14,6 +13,12 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     throw Object.assign(new Error('Invalid subscriber phone for hotspot login'), { statusCode: 400 });
   }
 
+  const access = resolvePackageAccessLimits(pkg);
+  const bindMac =
+    access.sharedUsers === 1 && transaction.subscriberMac
+      ? transaction.subscriberMac
+      : null;
+
   const claimed = await tx.transaction.updateMany({
     where: { id: transaction.id, status: 'PENDING' },
     data: {
@@ -22,6 +27,7 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
       sessionEnd,
       hotspotUsername,
       hotspotPin,
+      macBindCount: bindMac ? 1 : 0,
     },
   });
 
@@ -42,8 +48,6 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     note: `Payment ${transaction.campayReference || transaction.id}`,
   });
 
-  const access = resolvePackageAccessLimits(pkg);
-
   await mikrotik.grantAccess({
     routerId,
     username: hotspotUsername,
@@ -54,6 +58,8 @@ export async function completePaidSession(tx, { transaction, pkg, routerId, loca
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
     downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
     sharedUsers: access.sharedUsers,
+    macCookieMinutes: access.macCookieMinutes,
+    macAddress: bindMac,
   });
 
   return { sessionStart: now, sessionEnd, hotspotUsername, hotspotPin };

@@ -12,7 +12,7 @@ import {
   validateAccessPolicy,
 } from '../services/accessPolicy.js';
 import { resolvePortalBranding, brandingSelectFields } from '../utils/portalBranding.js';
-import { resolvePackageAccessLimits } from '../utils/packageAccess.js';
+import { resolvePackageAccessLimits, normalizeMaxSharedDevices } from '../utils/packageAccess.js';
 import {
   expireStalePendingPayments,
   findAnyPendingPayment,
@@ -70,8 +70,9 @@ function normalizePin(pin) {
   return String(pin || '').trim();
 }
 
-async function provisionHotspotUser({ routerId, location, pkg, username, password }) {
+async function provisionHotspotUser({ routerId, location, pkg, username, password, macAddress = null }) {
   const access = resolvePackageAccessLimits(pkg);
+  const bindMac = access.sharedUsers === 1 && macAddress ? macAddress : null;
 
   await mikrotik.grantAccess({
     routerId,
@@ -83,6 +84,8 @@ async function provisionHotspotUser({ routerId, location, pkg, username, passwor
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
     downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
     sharedUsers: access.sharedUsers,
+    macCookieMinutes: access.macCookieMinutes,
+    macAddress: bindMac,
   });
 }
 
@@ -527,6 +530,10 @@ async function performVoucherRedeem({ routerToken, code, pin, macAddress, device
           status: 'SUCCESS',
           sessionStart: now,
           sessionEnd,
+          macBindCount:
+            normalizeMaxSharedDevices(voucher.package.maxSharedDevices) === 1 && normalizedMac
+              ? 1
+              : 0,
         },
       });
 
@@ -549,6 +556,7 @@ async function performVoucherRedeem({ routerToken, code, pin, macAddress, device
     pkg: voucher.package,
     username: hotspotUsername,
     password: hotspotPin,
+    macAddress: normalizedMac,
   });
 
   return {

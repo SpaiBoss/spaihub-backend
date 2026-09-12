@@ -20,6 +20,11 @@ export async function getActiveVoucherSessions(voucherId) {
   });
 }
 
+/**
+ * Enforce simultaneous-device limits from package maxSharedDevices (preferred)
+ * or location maxDevicesPerAccessCode fallback. Location hotspot-sharing toggles
+ * are ignored — they cannot see devices behind NAT and misled owners.
+ */
 export function validateAccessPolicy(location, { activeDeviceCount, isExistingDevice, deviceLimit }) {
   if (isExistingDevice) {
     return { ok: true };
@@ -40,44 +45,11 @@ export function validateAccessPolicy(location, { activeDeviceCount, isExistingDe
     };
   }
 
-  if (totalLimit <= 1 && activeDeviceCount >= 1 && !location.allowHotspotSharing) {
-    return {
-      ok: false,
-      error: 'Hotspot sharing is disabled. Only one device can use each access code.',
-    };
-  }
-
-  if (totalLimit <= 1 && activeDeviceCount >= 1 && location.allowHotspotSharing) {
-    const hotspotLimit = Math.max(0, Number(location.maxHotspotDevices) || 0);
-    const secondaryDevices = activeDeviceCount;
-    if (secondaryDevices > hotspotLimit) {
-      return {
-        ok: false,
-        error:
-          hotspotLimit === 0
-            ? 'Hotspot sharing is enabled but no hotspot devices are allowed per access code'
-            : `Maximum of ${hotspotLimit} hotspot device${hotspotLimit === 1 ? '' : 's'} allowed per access code`,
-      };
-    }
-  }
-
   return { ok: true };
 }
 
 export function parseAccessPolicyInput(body) {
   const data = {};
-
-  if (body.allowHotspotSharing !== undefined) {
-    data.allowHotspotSharing = Boolean(body.allowHotspotSharing);
-  }
-
-  if (body.maxHotspotDevices !== undefined) {
-    const value = Number(body.maxHotspotDevices);
-    if (!Number.isInteger(value) || value < 0) {
-      return { error: 'maxHotspotDevices must be a non-negative integer' };
-    }
-    data.maxHotspotDevices = value;
-  }
 
   if (body.maxDevicesPerAccessCode !== undefined) {
     const value = Number(body.maxDevicesPerAccessCode);
@@ -85,6 +57,11 @@ export function parseAccessPolicyInput(body) {
       return { error: 'maxDevicesPerAccessCode must be a non-negative integer' };
     }
     data.maxDevicesPerAccessCode = value;
+  }
+
+  // Accept but ignore legacy hotspot-sharing fields so old clients do not error
+  if (body.allowHotspotSharing !== undefined || body.maxHotspotDevices !== undefined) {
+    // no-op: columns retained; package maxSharedDevices is the source of truth
   }
 
   return { data };

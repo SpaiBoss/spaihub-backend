@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+import { resolveMacCookieMinutes } from '../utils/packageAccess.js';
 
 export async function grantAccess({
   routerId,
@@ -10,7 +11,14 @@ export async function grantAccess({
   uploadSpeedMbPerSec = 1,
   downloadSpeedMbPerSec = null,
   sharedUsers = 1,
+  macCookieMinutes = null,
+  macAddress = null,
 }) {
+  const cookieMinutes =
+    macCookieMinutes != null
+      ? resolveMacCookieMinutes(macCookieMinutes)
+      : resolveMacCookieMinutes(sessionMinutes);
+
   await prisma.routerCommand.create({
     data: {
       routerId,
@@ -24,6 +32,8 @@ export async function grantAccess({
         uploadSpeedMbPerSec,
         downloadSpeedMbPerSec,
         sharedUsers,
+        macCookieMinutes: cookieMinutes,
+        macAddress: macAddress || null,
       },
     },
   });
@@ -37,6 +47,21 @@ export async function kickUser({ routerId, username, macAddress = null }) {
       payload: {
         username,
         macAddress: macAddress ?? null,
+      },
+    },
+  });
+}
+
+/** Bind an existing SpaiHub hotspot user to a new MAC (single-device packages). */
+export async function rebindMac({ routerId, username, macAddress }) {
+  if (!routerId || !username || !macAddress) return;
+  await prisma.routerCommand.create({
+    data: {
+      routerId,
+      type: 'REBIND_MAC',
+      payload: {
+        username,
+        macAddress,
       },
     },
   });

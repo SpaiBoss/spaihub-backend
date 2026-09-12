@@ -57,6 +57,7 @@ async function provisionVoucherOnRouter(routerId, pkg, voucher) {
     uploadSpeedMbPerSec: access.uploadSpeedMbPerSec,
     downloadSpeedMbPerSec: access.downloadSpeedMbPerSec,
     sharedUsers: access.sharedUsers,
+    macCookieMinutes: access.macCookieMinutes,
   });
 }
 

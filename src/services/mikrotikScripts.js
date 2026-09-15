@@ -157,6 +157,8 @@ export function buildCommandsRouterOs(commands) {
 
 export function buildConnectionScript(routerToken) {
   const mode = fetchMode(API_BASE);
+  const loginHtmlUrl = buildMikrotikLoginHtmlUrl(routerToken);
+  const loginFetchMode = fetchMode(loginHtmlUrl);
   // Keep lines short and use /system script — long scheduler on-event lines truncate in Terminal paste.
   return `# SpaiHub router connection script
 # Paste into MikroTik terminal after you have a working hotspot.
@@ -167,6 +169,9 @@ export function buildConnectionScript(routerToken) {
 /system script remove [find name=spaihub-heartbeat]
 /system script remove [find name=spaihub-commands]
 /system script remove [find name=spaihub-hotspot-active]
+
+# Refresh captive login page (fair-use message + portal redirect). Overwrites only on success.
+/tool fetch url="${loginHtmlUrl}" mode=${loginFetchMode} dst-path=hotspot/login.html
 
 /system script add name=spaihub-heartbeat source={
 :local token "${routerToken}"
@@ -243,7 +248,6 @@ export function buildMikrotikLoginHtml(routerToken) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="pragma" content="no-cache">
 <meta http-equiv="expires" content="-1">
-<meta http-equiv="refresh" content="0;url=${portalUrlHtml}">
 <title>SpaiHub</title>
 <style>
   *{box-sizing:border-box}
@@ -256,18 +260,43 @@ export function buildMikrotikLoginHtml(routerToken) {
   a.btn{display:block;width:100%;margin-top:0.5rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
     border-radius:0.5rem;font-weight:600;font-size:1rem;text-decoration:none}
   .hint{margin-top:1rem;opacity:0.55;font-size:0.75rem;line-height:1.4}
+  #hs-error{display:none}
 </style>
-<script>
-  location.replace(${portalUrlJs});
-</script>
 </head>
 <body>
+  <div id="hs-error">$(error)</div>
   <div class="card">
     <h1>SpaiHub</h1>
     <p class="sub">Opening WiFi portal — pay with Mobile Money or use a voucher.</p>
-    <a class="btn" href="${portalUrlHtml}">Continue to portal</a>
+    <a id="portal-continue" class="btn" href="${portalUrlHtml}">Continue to portal</a>
     <p class="hint">After payment, your username and PIN stay on screen. Tap Connect when ready.</p>
   </div>
+<script>
+(function () {
+  var base = ${portalUrlJs};
+  var errEl = document.getElementById('hs-error');
+  var err = ((errEl && errEl.textContent) || '').toLowerCase();
+  var fairUse = err && (
+    err.indexOf('traffic') !== -1 ||
+    err.indexOf('limit') !== -1 ||
+    err.indexOf('quota') !== -1 ||
+    err.indexOf('byte') !== -1
+  );
+  var target = base;
+  if (fairUse) {
+    try {
+      var u = new URL(base, window.location.href);
+      u.searchParams.set('reason', 'fair-use');
+      target = u.toString();
+    } catch (e) {
+      target = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'reason=fair-use';
+    }
+  }
+  var link = document.getElementById('portal-continue');
+  if (link) link.setAttribute('href', target);
+  location.replace(target);
+})();
+</script>
 </body>
 </html>
 `;

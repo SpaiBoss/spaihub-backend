@@ -256,7 +256,8 @@ export function buildMikrotikLoginHtml(routerToken) {
     background:#0E141B;color:#fff;padding:1.25rem}
   .card{width:100%;max-width:22rem;text-align:center}
   h1{font-size:1.35rem;margin:0;font-weight:700;letter-spacing:-0.02em}
-  .sub{margin:0.45rem 0 1.25rem;opacity:0.7;font-size:0.9rem;line-height:1.45}
+  .sub{margin:0.45rem 0 0.35rem;opacity:0.7;font-size:0.9rem;line-height:1.45}
+  .sub + .sub{margin-top:0}
   a.btn{display:block;width:100%;margin-top:0.5rem;padding:0.85rem 1.25rem;background:#0F766E;color:#fff;
     border-radius:0.5rem;font-weight:600;font-size:1rem;text-decoration:none}
   .hint{margin-top:1rem;opacity:0.55;font-size:0.75rem;line-height:1.4}
@@ -268,8 +269,9 @@ export function buildMikrotikLoginHtml(routerToken) {
   <div class="card">
     <h1>SpaiHub</h1>
     <p class="sub">Opening WiFi portal — pay with Mobile Money or use a voucher.</p>
-    <a id="portal-continue" class="btn" href="${portalUrlHtml}">Continue to portal</a>
-    <p class="hint">After payment, your username and PIN stay on screen. Tap Connect when ready.</p>
+    <p class="sub">Ouverture du portail WiFi — payez en Mobile Money ou avec un bon.</p>
+    <a id="portal-continue" class="btn" href="${portalUrlHtml}">Continue / Continuer</a>
+    <p class="hint">Fair use limit reached? Buy another package. · Plafond d’usage atteint ? Achetez un autre forfait.</p>
   </div>
 <script>
 (function () {
@@ -370,22 +372,22 @@ $(endif)
 <body $(if advert-pending == 'yes') onLoad="openAdvert()" $(endif)>
   <div class="card">
     <p class="brand">SpaiHub</p>
-    <div class="badge"><span class="badge-dot"></span> Online</div>
+    <div class="badge"><span class="badge-dot"></span> Online / En ligne</div>
 
     $(if login-by == 'trial')
-      <h1>Hi, trial user</h1>
-      <p class="sub">You are connected to this hotspot.</p>
+      <h1>Hi, trial user / Bonjour</h1>
+      <p class="sub">You are connected to this hotspot. · Vous êtes connecté à ce hotspot.</p>
     $(elif login-by != 'mac')
       <h1>Hi, $(username)</h1>
-      <p class="sub">You are connected to this hotspot.</p>
+      <p class="sub">You are connected to this hotspot. · Vous êtes connecté à ce hotspot.</p>
     $(else)
-      <h1>You&apos;re online</h1>
-      <p class="sub">This device is connected to the hotspot.</p>
+      <h1>You're online / Vous êtes en ligne</h1>
+      <p class="sub">This device is connected to the hotspot. · Cet appareil est connecté.</p>
     $(endif)
 
     <div class="stats">
-      <div class="row"><span class="label">IP address</span><span class="value">$(ip)</span></div>
-      <div class="row"><span class="label">Up / down</span><span class="value">$(bytes-in-nice) / $(bytes-out-nice)</span></div>
+      <div class="row"><span class="label">IP</span><span class="value">$(ip)</span></div>
+      <div class="row"><span class="label">Up / down · Haut / bas</span><span class="value">$(bytes-in-nice) / $(bytes-out-nice)</span></div>
       $(if session-time-left)
       <div class="row"><span class="label">Connected / left</span><span class="value">$(uptime) / $(session-time-left)</span></div>
       $(else)
@@ -401,7 +403,7 @@ $(endif)
     <form action="$(link-logout)" name="logout" onSubmit="return openLogout()">
       <div class="actions">
         $(if login-by-mac != 'yes')
-        <button type="submit">Log out</button>
+        <button type="submit">Log out / Déconnexion</button>
         $(endif)
       </div>
     </form>

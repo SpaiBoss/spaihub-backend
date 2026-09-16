@@ -1,4 +1,4 @@
-import prisma from '../utils/prisma.js';
+import { isPreferredLocale } from '../utils/locale.js';
 import {
   detectCameroonOperator,
   normalizeCameroonMobileLocal,
@@ -42,6 +42,7 @@ export async function getContributorMe(req, res, next) {
       status: c.status,
       emailVerified: c.emailVerified,
       momoPhone: c.momoPhone,
+      preferredLocale: c.preferredLocale || 'en',
       walletBalance: Number(c.walletBalance),
     });
   } catch (err) {
@@ -51,9 +52,10 @@ export async function getContributorMe(req, res, next) {
 
 export async function updateContributorMe(req, res, next) {
   try {
-    const { name, momoPhone } = req.body;
+    const { name, momoPhone, preferredLocale } = req.body;
     const data = {};
     if (typeof name === 'string' && name.trim()) data.name = name.trim();
+    if (isPreferredLocale(preferredLocale)) data.preferredLocale = preferredLocale;
     if (momoPhone !== undefined) {
       if (!momoPhone) {
         data.momoPhone = null;

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../utils/prisma.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
+import { normalizePreferredLocale } from '../utils/locale.js';
 import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
 
 export async function register(req, res, next) {
@@ -29,6 +30,8 @@ export async function register(req, res, next) {
     const passwordHash = await bcrypt.hash(password, 12);
     const emailVerifyToken = uuidv4();
 
+    const preferredLocale = normalizePreferredLocale(req.body.preferredLocale);
+
     const owner = await prisma.owner.create({
       data: {
         name: name.trim(),
@@ -36,11 +39,12 @@ export async function register(req, res, next) {
         passwordHash,
         emailVerifyToken,
         status: 'PENDING',
+        preferredLocale,
       },
     });
 
     try {
-      await sendVerificationEmail(owner.email, emailVerifyToken);
+      await sendVerificationEmail(owner.email, emailVerifyToken, preferredLocale);
     } catch {
       // Email failure shouldn't block registration
     }
@@ -100,6 +104,15 @@ export async function login(req, res, next) {
       return res.status(403).json({ error: 'Account is not active. Please verify your email or contact support.' });
     }
 
+    const preferredLocale = normalizePreferredLocale(req.body.preferredLocale);
+    if (preferredLocale && preferredLocale !== owner.preferredLocale) {
+      await prisma.owner.update({
+        where: { id: owner.id },
+        data: { preferredLocale },
+      });
+      owner.preferredLocale = preferredLocale;
+    }
+
     const token = jwt.sign(
       { id: owner.id, email: owner.email, role: 'owner' },
       process.env.JWT_SECRET,
@@ -108,7 +121,12 @@ export async function login(req, res, next) {
 
     res.json({
       token,
-      owner: { id: owner.id, name: owner.name, email: owner.email },
+      owner: {
+        id: owner.id,
+        name: owner.name,
+        email: owner.email,
+        preferredLocale: owner.preferredLocale || 'en',
+      },
     });
   } catch (err) {
     next(err);
@@ -137,7 +155,7 @@ export async function forgotPassword(req, res, next) {
       });
 
       try {
-        await sendPasswordResetEmail(owner.email, resetPasswordToken);
+        await sendPasswordResetEmail(owner.email, resetPasswordToken, owner.preferredLocale);
       } catch {
         // Don't reveal email send failures
       }
@@ -226,7 +244,7 @@ export async function resendVerification(req, res, next) {
       }
 
       try {
-        await sendVerificationEmail(owner.email, token);
+        await sendVerificationEmail(owner.email, token, owner.preferredLocale);
       } catch {
         // Do not reveal delivery failures
       }

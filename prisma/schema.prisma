@@ -131,6 +131,7 @@ model Owner {
   portalWelcomeText   String?
   showPlatformCredit  Boolean     @default(true)
   portalShowUploadSpeed Boolean   @default(false)
+  preferredLocale     String      @default("en")
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -357,6 +358,7 @@ model Contributor {
   resetPasswordToken  String?
   resetPasswordExpiry DateTime?
   momoPhone           String?
+  preferredLocale     String      @default("en")
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 

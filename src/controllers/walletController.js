@@ -193,6 +193,7 @@ export async function requestWithdrawal(req, res, next) {
         await sendWithdrawalStatusEmail(owner.email, {
           amountXaf: completed.amountXaf,
           status: 'APPROVED',
+          locale: owner.preferredLocale,
         });
       } catch {
         // Email failure shouldn't block withdrawal

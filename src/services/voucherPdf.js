@@ -186,7 +186,7 @@ function drawTicket(doc, voucher, box, assets) {
   if (voucher.expiresAt) {
     footnotes.push(`Valid until ${new Date(voucher.expiresAt).toLocaleDateString()}`);
   }
-  const instruction = assets.welcomeText || 'Enter code + PIN on the WiFi login page';
+  const instruction = assets.welcomeText || 'Enter code + PIN on the WiFi login page · Code + PIN sur la page WiFi';
   footnotes.push(instruction);
 
   doc.font('Helvetica').fontSize(6).fillColor(MUTED);

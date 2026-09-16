@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import prisma from '../utils/prisma.js';
+import { isPreferredLocale } from '../utils/locale.js';
 
 export async function getMe(req, res, next) {
   try {
@@ -10,6 +11,7 @@ export async function getMe(req, res, next) {
       email: owner.email,
       status: owner.status,
       emailVerified: owner.emailVerified,
+      preferredLocale: owner.preferredLocale || 'en',
     });
   } catch (err) {
     next(err);
@@ -18,20 +20,24 @@ export async function getMe(req, res, next) {
 
 export async function updateMe(req, res, next) {
   try {
-    const { name } = req.body;
-    if (!name?.trim()) {
-      return res.status(400).json({ error: 'Name is required' });
+    const { name, preferredLocale } = req.body;
+    const data = {};
+    if (typeof name === 'string' && name.trim()) data.name = name.trim();
+    if (isPreferredLocale(preferredLocale)) data.preferredLocale = preferredLocale;
+    if (!Object.keys(data).length) {
+      return res.status(400).json({ error: 'Nothing to update' });
     }
 
     const updated = await prisma.owner.update({
       where: { id: req.owner.id },
-      data: { name: name.trim() },
+      data,
       select: {
         id: true,
         name: true,
         email: true,
         status: true,
         emailVerified: true,
+        preferredLocale: true,
       },
     });
 

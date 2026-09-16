@@ -417,6 +417,7 @@ export async function processWithdrawal(req, res, next) {
         await sendWithdrawalStatusEmail(withdrawal.owner.email, {
           amountXaf: withdrawal.amountXaf,
           status: 'APPROVED',
+          locale: withdrawal.owner.preferredLocale,
         });
       } catch {
         // Email failure shouldn't block processing
@@ -434,6 +435,7 @@ export async function processWithdrawal(req, res, next) {
           amountXaf: withdrawal.amountXaf,
           status: 'REJECTED',
           adminNote: adminNote.trim(),
+          locale: withdrawal.owner.preferredLocale,
         });
       } catch {
         // Email failure shouldn't block processing
@@ -449,6 +451,7 @@ export async function processWithdrawal(req, res, next) {
         await sendWithdrawalStatusEmail(withdrawal.owner.email, {
           amountXaf: withdrawal.amountXaf,
           status: 'APPROVED',
+          locale: withdrawal.owner.preferredLocale,
         });
       } catch {
         // Email failure shouldn't block processing

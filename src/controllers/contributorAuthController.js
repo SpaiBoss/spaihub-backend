@@ -7,6 +7,7 @@ import {
   sendContributorPasswordResetEmail,
 } from '../services/email.js';
 import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
+import { normalizePreferredLocale } from '../utils/locale.js';
 
 export async function registerContributor(req, res, next) {
   try {
@@ -31,6 +32,8 @@ export async function registerContributor(req, res, next) {
     const passwordHash = await bcrypt.hash(password, 12);
     const emailVerifyToken = uuidv4();
 
+    const preferredLocale = normalizePreferredLocale(req.body.preferredLocale);
+
     const contributor = await prisma.contributor.create({
       data: {
         name: name.trim(),
@@ -38,11 +41,12 @@ export async function registerContributor(req, res, next) {
         passwordHash,
         emailVerifyToken,
         status: 'PENDING',
+        preferredLocale,
       },
     });
 
     try {
-      await sendContributorVerificationEmail(contributor.email, emailVerifyToken);
+      await sendContributorVerificationEmail(contributor.email, emailVerifyToken, preferredLocale);
     } catch {
       // Email failure shouldn't block registration
     }
@@ -117,6 +121,15 @@ export async function loginContributor(req, res, next) {
       });
     }
 
+    const preferredLocale = normalizePreferredLocale(req.body.preferredLocale);
+    if (preferredLocale && preferredLocale !== contributor.preferredLocale) {
+      await prisma.contributor.update({
+        where: { id: contributor.id },
+        data: { preferredLocale },
+      });
+      contributor.preferredLocale = preferredLocale;
+    }
+
     const token = jwt.sign(
       { id: contributor.id, email: contributor.email, role: 'contributor' },
       process.env.JWT_SECRET,
@@ -129,6 +142,7 @@ export async function loginContributor(req, res, next) {
         id: contributor.id,
         name: contributor.name,
         email: contributor.email,
+        preferredLocale: contributor.preferredLocale || 'en',
       },
     });
   } catch (err) {
@@ -160,7 +174,7 @@ export async function resendContributorVerification(req, res, next) {
         });
       }
       try {
-        await sendContributorVerificationEmail(contributor.email, token);
+        await sendContributorVerificationEmail(contributor.email, token, contributor.preferredLocale);
       } catch {
         // swallow
       }
@@ -193,7 +207,7 @@ export async function forgotContributorPassword(req, res, next) {
         data: { resetPasswordToken, resetPasswordExpiry },
       });
       try {
-        await sendContributorPasswordResetEmail(contributor.email, resetPasswordToken);
+        await sendContributorPasswordResetEmail(contributor.email, resetPasswordToken, contributor.preferredLocale);
       } catch {
         // swallow
       }

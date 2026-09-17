@@ -181,9 +181,13 @@ export async function updatePackage(req, res, next) {
   }
 }
 
-export async function deactivatePackage(req, res, next) {
+export async function setPackageActive(req, res, next) {
   try {
     const { locationId, packageId } = req.params;
+    const isActive = req.body?.isActive;
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ error: 'isActive boolean is required' });
+    }
 
     const location = await verifyLocationOwnership(locationId, req.owner.id);
     if (!location) {
@@ -200,11 +204,17 @@ export async function deactivatePackage(req, res, next) {
 
     const updated = await prisma.package.update({
       where: { id: packageId },
-      data: { isActive: false },
+      data: { isActive },
     });
 
     res.json(updated);
   } catch (err) {
     next(err);
   }
+}
+
+/** Soft-hide a package (legacy DELETE). Prefer PATCH .../status with isActive. */
+export async function deactivatePackage(req, res, next) {
+  req.body = { isActive: false };
+  return setPackageActive(req, res, next);
 }

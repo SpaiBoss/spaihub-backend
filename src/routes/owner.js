@@ -17,6 +17,7 @@ import {
   getPackages,
   createPackage,
   updatePackage,
+  setPackageActive,
   deactivatePackage,
 } from '../controllers/packageController.js';
 import {
@@ -75,6 +76,7 @@ router.delete('/locations/:locationId/routers/:routerId', deleteRouter);
 router.get('/locations/:locationId/packages', getPackages);
 router.post('/locations/:locationId/packages', createPackage);
 router.patch('/locations/:locationId/packages/:packageId', updatePackage);
+router.patch('/locations/:locationId/packages/:packageId/status', setPackageActive);
 router.delete('/locations/:locationId/packages/:packageId', deactivatePackage);
 
 router.get('/stats', getOwnerStats);

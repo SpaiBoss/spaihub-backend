@@ -171,3 +171,27 @@ export async function sendOwnerNotificationEmail(email, { title, body }) {
     html: baseTemplate(safeTitle, `<p>${safeBody}</p>`),
   });
 }
+
+export async function sendAuthenticatorSecurityEmail(email, { event, locale }) {
+  const lang = normalizePreferredLocale(locale);
+  const copy = {
+    enabled: lang === 'fr'
+      ? { subject: 'Authenticator SpaiHub activé', body: '<p>Un authenticator a été activé sur votre compte SpaiHub. Conservez vos codes de secours hors ligne.</p>' }
+      : { subject: 'SpaiHub authenticator enabled', body: '<p>An authenticator app was enabled on your SpaiHub account. Keep your backup codes offline.</p>' },
+    disabled: lang === 'fr'
+      ? { subject: 'Authenticator SpaiHub désactivé', body: '<p>L’authenticator a été désactivé sur votre compte SpaiHub.</p>' }
+      : { subject: 'SpaiHub authenticator disabled', body: '<p>The authenticator app was disabled on your SpaiHub account.</p>' },
+    backup_regenerated: lang === 'fr'
+      ? { subject: 'Nouveaux codes de secours SpaiHub', body: '<p>De nouveaux codes de secours authenticator ont été générés. Les anciens ne fonctionnent plus.</p>' }
+      : { subject: 'New SpaiHub backup codes', body: '<p>New authenticator backup codes were generated. Previous backup codes no longer work.</p>' },
+  }[event] || (lang === 'fr'
+    ? { subject: 'Sécurité du compte SpaiHub', body: '<p>Un changement de sécurité a eu lieu sur votre compte.</p>' }
+    : { subject: 'SpaiHub account security', body: '<p>A security change was made on your SpaiHub account.</p>' });
+
+  await transporter.sendMail({
+    from: process.env.SMTP_USER,
+    to: email,
+    subject: copy.subject,
+    html: baseTemplate(copy.subject, copy.body, lang),
+  });
+}

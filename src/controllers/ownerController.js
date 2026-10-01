@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import prisma from '../utils/prisma.js';
 import { isPreferredLocale } from '../utils/locale.js';
+import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
 export async function getMe(req, res, next) {
   try {
@@ -11,6 +12,7 @@ export async function getMe(req, res, next) {
       email: owner.email,
       status: owner.status,
       emailVerified: owner.emailVerified,
+      totpEnabled: Boolean(owner.totpEnabledAt),
       preferredLocale: owner.preferredLocale || 'en',
     });
   } catch (err) {
@@ -37,11 +39,15 @@ export async function updateMe(req, res, next) {
         email: true,
         status: true,
         emailVerified: true,
+        totpEnabledAt: true,
         preferredLocale: true,
       },
     });
 
-    res.json(updated);
+    res.json({
+      ...updated,
+      totpEnabled: Boolean(updated.totpEnabledAt),
+    });
   } catch (err) {
     next(err);
   }
@@ -62,6 +68,19 @@ export async function changePassword(req, res, next) {
     const valid = await bcrypt.compare(currentPassword, req.owner.passwordHash);
     if (!valid) {
       return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    if (isTotpEnabled(req.owner)) {
+      try {
+        await consumeTotpOrBackup(prisma, 'owner', req.owner, {
+          totpCode: req.body?.totpCode,
+          backupCode: req.body?.backupCode,
+        });
+      } catch (err) {
+        const mapped = totpErrorPayload(err);
+        if (mapped) return res.status(mapped.status).json(mapped.body);
+        throw err;
+      }
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 12);

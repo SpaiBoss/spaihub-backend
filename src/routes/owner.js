@@ -50,6 +50,20 @@ import {
 import { exportOwnerAccountingReport } from '../controllers/reportsController.js';
 import { getMe, updateMe, changePassword } from '../controllers/ownerController.js';
 import { getActiveSessions, kickSession } from '../controllers/sessionController.js';
+import { createTotpSecurityHandlers } from '../controllers/totpSecurityController.js';
+import rateLimit from 'express-rate-limit';
+
+const totpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const ownerTotp = createTotpSecurityHandlers({
+  model: 'owner',
+  getUser: (req) => req.owner,
+});
 
 const router = Router();
 
@@ -58,6 +72,12 @@ router.use(authenticateOwner);
 router.get('/me', getMe);
 router.patch('/me', updateMe);
 router.post('/change-password', changePassword);
+
+router.get('/security', ownerTotp.getSecurity);
+router.post('/security/totp/start', totpLimiter, ownerTotp.start);
+router.post('/security/totp/confirm', totpLimiter, ownerTotp.confirm);
+router.post('/security/totp/disable', totpLimiter, ownerTotp.disable);
+router.post('/security/backup-codes/regenerate', totpLimiter, ownerTotp.regenerateBackupCodes);
 
 router.get('/sessions', getActiveSessions);
 router.post('/sessions/:transactionId/kick', kickSession);

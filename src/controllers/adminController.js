@@ -15,6 +15,7 @@ import {
 import { countDeadLetterCommands } from '../services/routerCommandService.js';
 import { processCampayStatus } from '../controllers/portalController.js';
 import { normalizeCampayStatus } from '../utils/pendingPayment.js';
+import { requireAdminTotpIfEnabled } from './adminAuthController.js';
 import {
   startOfDay,
   endOfDay,
@@ -378,6 +379,8 @@ export async function processWithdrawal(req, res, next) {
     if (!['APPROVED', 'REJECTED', 'MANUAL_APPROVED'].includes(action)) {
       return res.status(400).json({ error: 'Action must be APPROVED, MANUAL_APPROVED, or REJECTED' });
     }
+
+    if (await requireAdminTotpIfEnabled(req, res)) return;
 
     const withdrawal = await prisma.withdrawal.findUnique({
       where: { id },

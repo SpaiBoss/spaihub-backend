@@ -8,6 +8,7 @@ import {
 } from '../services/email.js';
 import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
 import { normalizePreferredLocale } from '../utils/locale.js';
+import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
 export async function registerContributor(req, res, next) {
   try {
@@ -130,6 +131,15 @@ export async function loginContributor(req, res, next) {
       contributor.preferredLocale = preferredLocale;
     }
 
+    if (isTotpEnabled(contributor)) {
+      const preAuthToken = jwt.sign(
+        { id: contributor.id, email: contributor.email, role: 'contributor_pre_totp' },
+        process.env.JWT_SECRET,
+        { expiresIn: '2m' },
+      );
+      return res.json({ needsTotp: true, preAuthToken });
+    }
+
     const token = jwt.sign(
       { id: contributor.id, email: contributor.email, role: 'contributor' },
       process.env.JWT_SECRET,
@@ -142,6 +152,52 @@ export async function loginContributor(req, res, next) {
         id: contributor.id,
         name: contributor.name,
         email: contributor.email,
+        preferredLocale: contributor.preferredLocale || 'en',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function loginContributorTotp(req, res, next) {
+  try {
+    const { preAuthToken, totpCode, backupCode } = req.body || {};
+    if (!preAuthToken) {
+      return res.status(400).json({ error: 'preAuthToken is required' });
+    }
+    let payload;
+    try {
+      payload = jwt.verify(preAuthToken, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Authenticator step expired. Sign in again.' });
+    }
+    if (payload.role !== 'contributor_pre_totp') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    const contributor = await prisma.contributor.findUnique({ where: { id: payload.id } });
+    if (!contributor || contributor.status !== 'ACTIVE') {
+      return res.status(401).json({ error: 'Invalid or inactive account' });
+    }
+    try {
+      await consumeTotpOrBackup(prisma, 'contributor', contributor, { totpCode, backupCode });
+    } catch (err) {
+      const mapped = totpErrorPayload(err);
+      if (mapped) return res.status(mapped.status).json(mapped.body);
+      throw err;
+    }
+    const token = jwt.sign(
+      { id: contributor.id, email: contributor.email, role: 'contributor' },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+    res.json({
+      token,
+      contributor: {
+        id: contributor.id,
+        name: contributor.name,
+        email: contributor.email,
+        totpEnabled: true,
         preferredLocale: contributor.preferredLocale || 'en',
       },
     });

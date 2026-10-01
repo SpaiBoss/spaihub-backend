@@ -5,6 +5,7 @@ import prisma from '../utils/prisma.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
 import { normalizePreferredLocale } from '../utils/locale.js';
 import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
+import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
 export async function register(req, res, next) {
   try {
@@ -113,6 +114,15 @@ export async function login(req, res, next) {
       owner.preferredLocale = preferredLocale;
     }
 
+    if (isTotpEnabled(owner)) {
+      const preAuthToken = jwt.sign(
+        { id: owner.id, email: owner.email, role: 'owner_pre_totp' },
+        process.env.JWT_SECRET,
+        { expiresIn: '2m' },
+      );
+      return res.json({ needsTotp: true, preAuthToken });
+    }
+
     const token = jwt.sign(
       { id: owner.id, email: owner.email, role: 'owner' },
       process.env.JWT_SECRET,
@@ -125,6 +135,52 @@ export async function login(req, res, next) {
         id: owner.id,
         name: owner.name,
         email: owner.email,
+        preferredLocale: owner.preferredLocale || 'en',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function loginTotp(req, res, next) {
+  try {
+    const { preAuthToken, totpCode, backupCode } = req.body || {};
+    if (!preAuthToken) {
+      return res.status(400).json({ error: 'preAuthToken is required' });
+    }
+    let payload;
+    try {
+      payload = jwt.verify(preAuthToken, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Authenticator step expired. Sign in again.' });
+    }
+    if (payload.role !== 'owner_pre_totp') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    const owner = await prisma.owner.findUnique({ where: { id: payload.id } });
+    if (!owner || owner.status !== 'ACTIVE') {
+      return res.status(401).json({ error: 'Invalid or inactive account' });
+    }
+    try {
+      await consumeTotpOrBackup(prisma, 'owner', owner, { totpCode, backupCode });
+    } catch (err) {
+      const mapped = totpErrorPayload(err);
+      if (mapped) return res.status(mapped.status).json(mapped.body);
+      throw err;
+    }
+    const token = jwt.sign(
+      { id: owner.id, email: owner.email, role: 'owner' },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+    res.json({
+      token,
+      owner: {
+        id: owner.id,
+        name: owner.name,
+        email: owner.email,
+        totpEnabled: true,
         preferredLocale: owner.preferredLocale || 'en',
       },
     });

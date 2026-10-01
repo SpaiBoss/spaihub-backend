@@ -13,6 +13,7 @@ import {
 } from '../services/withdrawalDisbursement.js';
 import { recordLedgerEntry } from '../services/walletLedger.js';
 import { getOwnerAvailableXaf } from '../services/contributorReserve.js';
+import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
 const MIN_WITHDRAWAL = 100;
 
@@ -111,6 +112,24 @@ export async function requestWithdrawal(req, res, next) {
         const statusCode = existing.status === 'PENDING' ? 202 : 201;
         return res.status(statusCode).json(existing);
       }
+    }
+
+    if (!isTotpEnabled(req.owner)) {
+      return res.status(403).json({
+        error: 'Turn on an authenticator app in Settings before you can withdraw.',
+        code: 'TOTP_REQUIRED',
+      });
+    }
+
+    try {
+      await consumeTotpOrBackup(prisma, 'owner', req.owner, {
+        totpCode: req.body?.totpCode,
+        backupCode: req.body?.backupCode,
+      });
+    } catch (err) {
+      const mapped = totpErrorPayload(err);
+      if (mapped) return res.status(mapped.status).json(mapped.body);
+      throw err;
     }
 
     let withdrawal;

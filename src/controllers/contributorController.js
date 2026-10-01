@@ -1,3 +1,4 @@
+import prisma from '../utils/prisma.js';
 import { isPreferredLocale } from '../utils/locale.js';
 import {
   detectCameroonOperator,
@@ -11,6 +12,7 @@ import {
   completeContributorWithdrawalDisbursement,
   holdContributorWithdrawalForAdminRetry,
 } from '../services/contributorWithdrawal.js';
+import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
 const MIN_WITHDRAWAL = 100;
 const BYTES_PER_GB = 1024 ** 3;
@@ -43,6 +45,7 @@ export async function getContributorMe(req, res, next) {
       emailVerified: c.emailVerified,
       momoPhone: c.momoPhone,
       preferredLocale: c.preferredLocale || 'en',
+      totpEnabled: Boolean(c.totpEnabledAt),
       walletBalance: Number(c.walletBalance),
     });
   } catch (err) {
@@ -78,6 +81,7 @@ export async function updateContributorMe(req, res, next) {
       name: updated.name,
       email: updated.email,
       momoPhone: updated.momoPhone,
+      totpEnabled: Boolean(updated.totpEnabledAt),
       walletBalance: Number(updated.walletBalance),
     });
   } catch (err) {
@@ -251,6 +255,24 @@ export async function requestContributorWithdrawal(req, res, next) {
         const statusCode = existing.status === 'PENDING' ? 202 : 201;
         return res.status(statusCode).json(existing);
       }
+    }
+
+    if (!isTotpEnabled(req.contributor)) {
+      return res.status(403).json({
+        error: 'Turn on an authenticator app in Settings before you can withdraw.',
+        code: 'TOTP_REQUIRED',
+      });
+    }
+
+    try {
+      await consumeTotpOrBackup(prisma, 'contributor', req.contributor, {
+        totpCode: req.body?.totpCode,
+        backupCode: req.body?.backupCode,
+      });
+    } catch (err) {
+      const mapped = totpErrorPayload(err);
+      if (mapped) return res.status(mapped.status).json(mapped.body);
+      throw err;
     }
 
     let withdrawal;

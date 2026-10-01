@@ -132,6 +132,12 @@ model Owner {
   showPlatformCredit  Boolean     @default(true)
   portalShowUploadSpeed Boolean   @default(false)
   preferredLocale     String      @default("en")
+  totpSecretEnc         String?
+  totpPendingSecretEnc  String?
+  totpEnabledAt         DateTime?
+  backupCodesHash       Json?
+  totpFailCount         Int         @default(0)
+  totpLockedUntil       DateTime?
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -299,6 +305,12 @@ model Admin {
   id           String   @id @default(uuid())
   email        String   @unique
   passwordHash String
+  totpSecretEnc         String?
+  totpPendingSecretEnc  String?
+  totpEnabledAt         DateTime?
+  backupCodesHash       Json?
+  totpFailCount         Int       @default(0)
+  totpLockedUntil       DateTime?
   createdAt    DateTime @default(now())
 }
 
@@ -359,6 +371,12 @@ model Contributor {
   resetPasswordExpiry DateTime?
   momoPhone           String?
   preferredLocale     String      @default("en")
+  totpSecretEnc         String?
+  totpPendingSecretEnc  String?
+  totpEnabledAt         DateTime?
+  backupCodesHash       Json?
+  totpFailCount         Int         @default(0)
+  totpLockedUntil       DateTime?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 

@@ -5,6 +5,7 @@ import {
   failContributorWithdrawalAndRefund,
   markContributorWithdrawalApproved,
 } from '../services/contributorWithdrawal.js';
+import { requireAdminTotpIfEnabled } from './adminAuthController.js';
 
 export async function listLocationsForAdmin(req, res, next) {
   try {
@@ -384,6 +385,8 @@ export async function processContributorWithdrawal(req, res, next) {
     if (!['APPROVE', 'REJECT', 'RETRY_DISBURSE'].includes(action)) {
       return res.status(400).json({ error: 'action must be APPROVE, REJECT, or RETRY_DISBURSE' });
     }
+
+    if (await requireAdminTotpIfEnabled(req, res)) return;
 
     const withdrawal = await prisma.contributorWithdrawal.findUnique({ where: { id } });
     if (!withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });

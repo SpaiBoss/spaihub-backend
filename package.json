@@ -28,8 +28,10 @@
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^9.0.1",
+    "otpauth": "^9.5.2",
     "pdfkit": "^0.19.1",
     "prisma": "^5.22.0",
+    "qrcode": "^1.5.4",
     "uuid": "^14.0.0",
     "winston": "^3.19.0"
   }

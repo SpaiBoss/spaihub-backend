@@ -33,10 +33,32 @@ import {
   processContributorWithdrawal,
   listAdminLocations,
 } from '../controllers/adminContributorController.js';
+import { getAdminMe } from '../controllers/adminAuthController.js';
+import { createTotpSecurityHandlers } from '../controllers/totpSecurityController.js';
+import rateLimit from 'express-rate-limit';
+
+const totpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const adminTotp = createTotpSecurityHandlers({
+  model: 'admin',
+  getUser: (req) => req.admin,
+});
 
 const router = Router();
 
 router.use(authenticateAdmin);
+
+router.get('/me', getAdminMe);
+router.get('/security', adminTotp.getSecurity);
+router.post('/security/totp/start', totpLimiter, adminTotp.start);
+router.post('/security/totp/confirm', totpLimiter, adminTotp.confirm);
+router.post('/security/totp/disable', totpLimiter, adminTotp.disable);
+router.post('/security/backup-codes/regenerate', totpLimiter, adminTotp.regenerateBackupCodes);
 
 router.get('/stats', getPlatformStats);
 router.get('/stats/revenue-chart', getPlatformRevenueChart);

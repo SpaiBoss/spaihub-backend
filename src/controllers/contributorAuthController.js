@@ -6,7 +6,7 @@ import {
   sendContributorVerificationEmail,
   sendContributorPasswordResetEmail,
 } from '../services/email.js';
-import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
+import { getEmailValidationError, isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
 import { normalizePreferredLocale } from '../utils/locale.js';
 import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
@@ -17,8 +17,9 @@ export async function registerContributor(req, res, next) {
     if (!name?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: 'Enter a valid email address' });
+    const emailError = getEmailValidationError(email);
+    if (emailError) {
+      return res.status(400).json({ error: emailError });
     }
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });

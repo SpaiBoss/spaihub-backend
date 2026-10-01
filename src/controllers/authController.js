@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import prisma from '../utils/prisma.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
 import { normalizePreferredLocale } from '../utils/locale.js';
-import { isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
+import { getEmailValidationError, isValidEmail, normalizeEmail } from '../utils/queryValidation.js';
 import { consumeTotpOrBackup, isTotpEnabled, totpErrorPayload } from '../services/totp.js';
 
 export async function register(req, res, next) {
@@ -15,8 +15,9 @@ export async function register(req, res, next) {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: 'Enter a valid email address' });
+    const emailError = getEmailValidationError(email);
+    if (emailError) {
+      return res.status(400).json({ error: emailError });
     }
 
     if (password.length < 8) {

@@ -33,6 +33,12 @@ services:
         value: "true"
       - key: CAMPAY_APP_NAME
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: "SpaiHub"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

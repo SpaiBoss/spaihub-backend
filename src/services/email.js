@@ -1,15 +1,75 @@
 import nodemailer from 'nodemailer';
 import { normalizePreferredLocale } from '../utils/locale.js';
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+function mailFrom() {
+  const email = process.env.EMAIL_FROM?.trim() || process.env.SMTP_USER?.trim();
+  const name = process.env.EMAIL_FROM_NAME?.trim() || 'SpaiHub';
+  if (!email) {
+    throw new Error('EMAIL_FROM (or SMTP_USER) is not configured');
+  }
+  return { email, name };
+}
+
+function smtpTransporter() {
+  const host = process.env.SMTP_HOST?.trim();
+  if (!host) return null;
+  return nodemailer.createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+}
+
+async function sendViaBrevo({ to, subject, html }) {
+  const apiKey = process.env.BREVO_API_KEY?.trim();
+  if (!apiKey) return false;
+
+  const { email, name } = mailFrom();
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': apiKey,
+    },
+    body: JSON.stringify({
+      sender: { name, email },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Brevo send failed (${res.status}): ${detail}`);
+  }
+  return true;
+}
+
+async function sendViaSmtp({ to, subject, html }) {
+  const transporter = smtpTransporter();
+  if (!transporter) return false;
+
+  const { email, name } = mailFrom();
+  await transporter.sendMail({
+    from: name ? `${name} <${email}>` : email,
+    to,
+    subject,
+    html,
+  });
+  return true;
+}
+
+export async function sendEmail({ to, subject, html, lang = 'en' }) {
+  if (await sendViaBrevo({ to, subject, html, lang })) return;
+  if (await sendViaSmtp({ to, subject, html, lang })) return;
+  throw new Error('Email is not configured (set BREVO_API_KEY + EMAIL_FROM, or SMTP_HOST)');
+}
 
 function baseTemplate(title, body, lang = 'en') {
   return `
@@ -55,11 +115,11 @@ export async function sendVerificationEmail(email, token, locale) {
         title: 'Verify your email',
         body: `<p>Welcome to SpaiHub! Please verify your email address to activate your account.</p>${btn(verifyUrl, 'Verify Email')}`,
       };
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: copy.subject,
     html: baseTemplate(copy.title, copy.body, lang),
+    lang,
   });
 }
 
@@ -77,11 +137,11 @@ export async function sendContributorVerificationEmail(email, token, locale) {
         title: 'Verify your email',
         body: `<p>Welcome to SpaiHub Contributors. Please verify your email. After that, a SpaiHub admin will approve your account before you can sign in.</p>${btn(verifyUrl, 'Verify Email')}`,
       };
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: copy.subject,
     html: baseTemplate(copy.title, copy.body, lang),
+    lang,
   });
 }
 
@@ -99,11 +159,11 @@ export async function sendContributorPasswordResetEmail(email, token, locale) {
         title: 'Reset your password',
         body: `<p>We received a request to reset your contributor password. This link expires in 1 hour.</p>${btn(resetUrl, 'Reset Password')}<p style="color:#64748b;font-size:14px;">If you didn't request this, you can safely ignore this email.</p>`,
       };
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: copy.subject,
     html: baseTemplate(copy.title, copy.body, lang),
+    lang,
   });
 }
 
@@ -121,11 +181,11 @@ export async function sendPasswordResetEmail(email, token, locale) {
         title: 'Reset your password',
         body: `<p>We received a request to reset your password. Click the button below to choose a new password. This link expires in 1 hour.</p>${btn(resetUrl, 'Reset Password')}<p style="color:#64748b;font-size:14px;">If you didn't request this, you can safely ignore this email.</p>`,
       };
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: copy.subject,
     html: baseTemplate(copy.title, copy.body, lang),
+    lang,
   });
 }
 
@@ -146,11 +206,11 @@ export async function sendWithdrawalStatusEmail(email, { amountXaf, status, admi
           : `<p>Your withdrawal request for <strong>${amountXaf.toLocaleString()} XAF</strong> was rejected.</p>${adminNote ? `<p><strong>Reason:</strong> ${adminNote}</p><p>The amount has been refunded to your wallet balance.</p>` : ''}`,
       };
 
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: copy.subject,
     html: baseTemplate(copy.subject, copy.body, lang),
+    lang,
   });
 }
 
@@ -164,8 +224,7 @@ export async function sendOwnerNotificationEmail(email, { title, body }) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: title,
     html: baseTemplate(safeTitle, `<p>${safeBody}</p>`),
@@ -188,10 +247,10 @@ export async function sendAuthenticatorSecurityEmail(email, { event, locale }) {
     ? { subject: 'Sécurité du compte SpaiHub', body: '<p>Un changement de sécurité a eu lieu sur votre compte.</p>' }
     : { subject: 'SpaiHub account security', body: '<p>A security change was made on your SpaiHub account.</p>' });
 
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendEmail({
     to: email,
     subject: copy.subject,
     html: baseTemplate(copy.subject, copy.body, lang),
+    lang,
   });
 }

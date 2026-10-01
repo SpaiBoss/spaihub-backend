@@ -67,7 +67,7 @@ export async function changePassword(req, res, next) {
 
     const valid = await bcrypt.compare(currentPassword, req.owner.passwordHash);
     if (!valid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
+      return res.status(403).json({ error: 'Current password is incorrect' });
     }
 
     if (isTotpEnabled(req.owner)) {

@@ -42,7 +42,7 @@ export function createTotpSecurityHandlers({ model, getUser }) {
         }
         const valid = await bcrypt.compare(currentPassword, user.passwordHash);
         if (!valid) {
-          return res.status(401).json({ error: 'Current password is incorrect' });
+          return res.status(403).json({ error: 'Current password is incorrect' });
         }
         if (isTotpEnabled(user)) {
           return res.status(409).json({ error: 'Authenticator is already enabled' });
@@ -80,7 +80,7 @@ export function createTotpSecurityHandlers({ model, getUser }) {
         const { code } = req.body || {};
         const pending = decryptSecret(user.totpPendingSecretEnc);
         if (!verifyTotpCode(pending, user.email, code)) {
-          return res.status(401).json({ error: 'Invalid authenticator code', code: 'TOTP_INVALID' });
+          return res.status(403).json({ error: 'Invalid authenticator code', code: 'TOTP_INVALID' });
         }
 
         const backupCodes = generateBackupCodes();
@@ -114,7 +114,7 @@ export function createTotpSecurityHandlers({ model, getUser }) {
         }
         const valid = await bcrypt.compare(currentPassword, user.passwordHash);
         if (!valid) {
-          return res.status(401).json({ error: 'Current password is incorrect' });
+          return res.status(403).json({ error: 'Current password is incorrect' });
         }
         await consumeTotpOrBackup(prisma, model, user, { totpCode, backupCode });
         await prisma[model].update({

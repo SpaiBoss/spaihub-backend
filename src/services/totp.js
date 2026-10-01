@@ -161,7 +161,7 @@ export async function consumeTotpOrBackup(prisma, model, user, { totpCode, backu
   }
 
   await recordTotpFailure(prisma, model, user);
-  throw httpError('Invalid authenticator code', 401, 'TOTP_INVALID');
+  throw httpError('Invalid authenticator code', 403, 'TOTP_INVALID');
 }
 
 export function totpErrorPayload(err) {
